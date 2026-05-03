@@ -1,4 +1,11 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   deepseekClassifyInventory,
@@ -20,6 +27,13 @@ import {
   SCENARIO_ORDER,
   type ScenarioKey,
 } from "../skillScenarioCategories";
+import {
+  bucketInventoryByAgent,
+  filterInventoryForAgent,
+  inferAgentIdFromAssetPath,
+  inventoryAssetCount,
+} from "../agentAssetGrouping";
+import { revealPathInFolder } from "../api/reveal";
 
 type AssetKind = "skill" | "mcp" | "rule";
 
@@ -37,6 +51,13 @@ type BrowseRow = {
   scenario?: string | null;
 };
 
+type BrowseSection = {
+  key: string;
+  /** 空字符串：不展示分组标题（如「全部」汇总） */
+  title: string;
+  rows: BrowseRow[];
+};
+
 /** 与 App 侧栏 Agent 名称一致；在「全部」汇总页用于兜底扫描 */
 const AGENT_LABEL_BY_ID: Record<string, string> = {
   cursor: "Cursor",
@@ -50,6 +71,12 @@ const FALLBACK_AGENT_IDS = ["cursor", "claude", "trae", "qoder", "kiro"] as cons
 
 function folderBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+}
+
+/** HTML `id` 安全片段（来自路径等分组 key） */
+function sectionIdSafeFragment(sectionKey: string): string {
+  const s = sectionKey.replace(/\W/g, "_");
+  return s.length > 0 ? s : "sec";
 }
 
 type AggregateSnapshot = {
@@ -116,10 +143,6 @@ function patchAggregateSnapshot(
   };
 }
 
-function inventoryAssetCount(inv: AgentInventory): number {
-  return inv.skills.length + inv.mcp.length + inv.rules.length;
-}
-
 type FilterKey = "all" | AssetKind;
 
 const FILTER_LABEL: Record<FilterKey, string> = {
@@ -176,16 +199,24 @@ export default function SkillBrowseShell({
   projectRoot,
 }: Props) {
   const searchFieldId = useId();
+  const browseSectionDomPrefix = useId().replace(/\W/g, "");
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [scenario, setScenario] = useState<ScenarioKey>("all");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [selectedEntry, setSelectedEntry] = useState<DetailEntry | null>(null);
+  /** 展开中的分组 key；Agent/项目页由列表分组数量同步（仅 1 个标题时默认展开） */
+  const [expandedSectionKeys, setExpandedSectionKeys] = useState<
+    Set<string>
+  >(() => new Set());
   const [liveInv, setLiveInv] = useState<AgentInventory | null | undefined>(
     undefined,
   );
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveFailed, setLiveFailed] = useState(false);
+  const [agentProjectScans, setAgentProjectScans] = useState<
+    { path: string; inv: AgentInventory | null }[]
+  >([]);
   const [projectInv, setProjectInv] = useState<AgentInventory | null | undefined>(
     undefined,
   );
@@ -199,6 +230,12 @@ export default function SkillBrowseShell({
     () => dataSet === "aggregate",
   );
   const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
+  const [cardContextMenu, setCardContextMenu] = useState<{
+    x: number;
+    y: number;
+    path: string;
+  } | null>(null);
+  const cardContextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const k = searchParams.get("kind");
@@ -208,36 +245,97 @@ export default function SkillBrowseShell({
   }, [searchParams]);
 
   useEffect(() => {
+    setCardContextMenu(null);
+  }, [dataSet, ecosystem, projectRoot]);
+
+  useEffect(() => {
+    if (!cardContextMenu) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (cardContextMenuRef.current?.contains(e.target as Node)) return;
+      setCardContextMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCardContextMenu(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [cardContextMenu]);
+
+  useEffect(() => {
     if (!ecosystem || dataSet !== "skills") {
       setLiveInv(undefined);
       setLiveFailed(false);
       setLiveLoading(false);
+      setAgentProjectScans([]);
       return;
     }
     let cancelled = false;
     setLiveLoading(true);
     setLiveFailed(false);
-    getAgentGlobalInventory(ecosystem).then(async (data) => {
+    setLiveInv(undefined);
+    setAgentProjectScans([]);
+
+    (async () => {
+      const globalInv = await getAgentGlobalInventory(ecosystem);
+      const projList = await Promise.all(
+        projectPaths.map((path) => scanProjectDirectory(path)),
+      );
       if (cancelled) return;
+
       setLiveLoading(false);
-      if (data === null) {
-        setLiveInv(null);
-        setLiveFailed(true);
+      setLiveFailed(globalInv === null);
+      setLiveInv(globalInv);
+      setAgentProjectScans(
+        projectPaths.map((path, i) => ({
+          path,
+          inv: projList[i],
+        })),
+      );
+
+      const parts: AgentInventory[] = [];
+      if (globalInv) parts.push(globalInv);
+      for (const raw of projList) {
+        if (raw) parts.push(filterInventoryForAgent(ecosystem, raw));
+      }
+      const merged = dedupeMergeInventories(parts);
+      const cfg = await getDeepseekSettings();
+      if (
+        cancelled ||
+        !cfg?.apiKeyConfigured ||
+        inventoryAssetCount(merged) === 0
+      ) {
         return;
       }
-      setLiveFailed(false);
-      setLiveInv(data);
-      const cfg = await getDeepseekSettings();
-      if (cancelled || !cfg?.apiKeyConfigured) return;
       setAiScenarioBusy(true);
-      const next = await deepseekClassifyInventory(data);
-      if (!cancelled && next) setLiveInv(next);
+      const classified = await deepseekClassifyInventory(merged);
+      if (cancelled || !classified) {
+        if (!cancelled) setAiScenarioBusy(false);
+        return;
+      }
+      const map = scenarioMapFromInventory(classified);
+      if (globalInv) setLiveInv(patchAgentInventory(globalInv, map));
+      setAgentProjectScans(
+        projectPaths.map((path, i) => {
+          const raw = projList[i];
+          if (!raw) return { path, inv: null };
+          const filtered = filterInventoryForAgent(ecosystem, raw);
+          return {
+            path,
+            inv: patchAgentInventory(filtered, map),
+          };
+        }),
+      );
       if (!cancelled) setAiScenarioBusy(false);
-    });
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [ecosystem, dataSet]);
+  }, [ecosystem, dataSet, projectPaths]);
 
   useEffect(() => {
     if (dataSet !== "project") {
@@ -360,7 +458,27 @@ export default function SkillBrowseShell({
     };
   }, [dataSet, projectPaths]);
 
-  const items = useMemo(() => {
+  const sections = useMemo((): BrowseSection[] => {
+    const applyFilters = (rows: BrowseRow[]): BrowseRow[] => {
+      let r = rows;
+      if (filter !== "all") {
+        r = r.filter((row) => row.kind === filter);
+      }
+      const q = query.trim().toLowerCase();
+      if (q) {
+        r = r.filter(
+          (row) =>
+            row.title.toLowerCase().includes(q) ||
+            row.desc.toLowerCase().includes(q) ||
+            (row.sourcePath?.toLowerCase().includes(q) ?? false),
+        );
+      }
+      if (scenario !== "all") {
+        r = r.filter((row) => rowMatchesScenarioChip(row, scenario));
+      }
+      return r;
+    };
+
     if (dataSet === "project") {
       if (!projectRoot) {
         return [];
@@ -371,26 +489,25 @@ export default function SkillBrowseShell({
       if (projectFailed) {
         return [];
       }
-      if (projectInv) {
-        let rows = inventoryToRows(projectInv, "project", title);
-        if (filter !== "all") {
-          rows = rows.filter((r) => r.kind === filter);
-        }
-        const q = query.trim().toLowerCase();
-        if (q) {
-          rows = rows.filter(
-            (r) =>
-              r.title.toLowerCase().includes(q) ||
-              r.desc.toLowerCase().includes(q) ||
-              (r.sourcePath?.toLowerCase().includes(q) ?? false),
-          );
-        }
-        if (scenario !== "all") {
-          rows = rows.filter((r) => rowMatchesScenarioChip(r, scenario));
-        }
-        return rows;
+      if (!projectInv) {
+        return [];
       }
-      return [];
+      const buckets = bucketInventoryByAgent(projectInv);
+      const out: BrowseSection[] = [];
+      for (const { agentId, inv } of buckets) {
+        const agentTitle =
+          agentId === "__other__"
+            ? "其他"
+            : AGENT_LABEL_BY_ID[agentId] ?? agentId;
+        let rows = inventoryToRows(inv, agentId, agentTitle).map((r) => ({
+          ...r,
+          id: `proj:${agentId}:${r.id}`,
+        }));
+        rows = applyFilters(rows);
+        out.push({ key: agentId, title: agentTitle, rows });
+      }
+      out.sort((a, b) => b.rows.length - a.rows.length);
+      return out.filter((s) => s.rows.length > 0);
     }
 
     if (dataSet === "aggregate") {
@@ -404,6 +521,7 @@ export default function SkillBrowseShell({
           ...inventoryToRows(a.inv, a.id, a.title).map((r) => ({
             ...r,
             id: `g:${a.id}:${r.id}`,
+            tags: [a.title, "用户全局"],
           })),
         );
       }
@@ -411,56 +529,63 @@ export default function SkillBrowseShell({
         if (!p.inv) continue;
         const bn = folderBasename(p.path);
         rows.push(
-          ...inventoryToRows(p.inv, "project", bn).map((r) => ({
-            ...r,
-            id: `p:${p.path}:${r.id}`,
-          })),
+          ...inventoryToRows(p.inv, "project", bn).map((r) => {
+            const aid = inferAgentIdFromAssetPath(r.sourcePath ?? "");
+            const agentLbl = aid
+              ? (AGENT_LABEL_BY_ID[aid] ?? aid)
+              : "其他";
+            return {
+              ...r,
+              id: `p:${p.path}:${r.id}`,
+              tags: [agentLbl, bn],
+            };
+          }),
         );
       }
-      if (filter !== "all") {
-        rows = rows.filter((r) => r.kind === filter);
-      }
-      const q = query.trim().toLowerCase();
-      if (q) {
-        rows = rows.filter(
-          (r) =>
-            r.title.toLowerCase().includes(q) ||
-            r.desc.toLowerCase().includes(q) ||
-            (r.sourcePath?.toLowerCase().includes(q) ?? false),
-        );
-      }
-      if (scenario !== "all") {
-        rows = rows.filter((r) => rowMatchesScenarioChip(r, scenario));
-      }
-      return rows;
+      rows = applyFilters(rows);
+      return [{ key: "aggregate", title: "", rows }];
     }
 
     if (ecosystem && dataSet === "skills") {
       if (liveLoading && liveInv === undefined) {
         return [];
       }
-      if (liveFailed) {
-        return [];
-      }
+
+      const globalKey = `global:${ecosystem}`;
+      let globalRows: BrowseRow[] = [];
       if (liveInv) {
-        let rows = inventoryToRows(liveInv, ecosystem, title);
-        if (filter !== "all") {
-          rows = rows.filter((r) => r.kind === filter);
-        }
-        const q = query.trim().toLowerCase();
-        if (q) {
-          rows = rows.filter(
-            (r) =>
-              r.title.toLowerCase().includes(q) ||
-              r.desc.toLowerCase().includes(q) ||
-              (r.sourcePath?.toLowerCase().includes(q) ?? false),
-          );
-        }
-        if (scenario !== "all") {
-          rows = rows.filter((r) => rowMatchesScenarioChip(r, scenario));
-        }
-        return rows;
+        globalRows = applyFilters(
+          inventoryToRows(liveInv, ecosystem, title).map((r) => ({
+            ...r,
+            id: `g:${ecosystem}:${r.id}`,
+          })),
+        );
       }
+      const globalSection: BrowseSection = {
+        key: globalKey,
+        title: "用户全局目录",
+        rows: globalRows,
+      };
+
+      const projectSections: BrowseSection[] = [];
+      for (const { path, inv } of agentProjectScans) {
+        if (!inv) continue;
+        const scoped = filterInventoryForAgent(ecosystem, inv);
+        if (inventoryAssetCount(scoped) === 0) continue;
+        const bn = folderBasename(path);
+        let rows = inventoryToRows(scoped, "project", bn).map((r) => ({
+          ...r,
+          id: `a:${ecosystem}:${path}:${r.id}`,
+        }));
+        rows = applyFilters(rows);
+        projectSections.push({ key: path, title: bn, rows });
+      }
+      projectSections.sort((a, b) => b.rows.length - a.rows.length);
+      const projectSectionsNonEmpty = projectSections.filter(
+        (s) => s.rows.length > 0,
+      );
+
+      return [globalSection, ...projectSectionsNonEmpty];
     }
 
     return [];
@@ -471,7 +596,6 @@ export default function SkillBrowseShell({
     scenario,
     query,
     liveInv,
-    liveFailed,
     liveLoading,
     title,
     projectRoot,
@@ -480,36 +604,126 @@ export default function SkillBrowseShell({
     projectLoading,
     aggregateSnapshot,
     aggregateLoading,
+    agentProjectScans,
   ]);
 
-  const showLiveSubtitle =
-    ecosystem &&
-    dataSet === "skills" &&
-    liveInv &&
-    !liveFailed &&
-    !liveLoading;
+  useEffect(() => {
+    if (dataSet !== "skills" && dataSet !== "project") {
+      setExpandedSectionKeys(new Set());
+      return;
+    }
+    const titled = sections.filter((s) => s.title);
+    if (titled.length === 1) {
+      setExpandedSectionKeys(new Set([titled[0]!.key]));
+    } else {
+      setExpandedSectionKeys(new Set());
+    }
+  }, [dataSet, sections]);
+
+  const listedTotal = sections.reduce((n, s) => n + s.rows.length, 0);
+
+  const toggleSectionExpanded = (sectionKey: string) => {
+    setExpandedSectionKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionKey)) next.delete(sectionKey);
+      else next.add(sectionKey);
+      return next;
+    });
+  };
+
+  const openDetail = (item: BrowseRow) => {
+    setSelectedEntry({
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      description: item.desc,
+      path: item.sourcePath,
+    });
+  };
+
+  const onCardContextMenu = (e: MouseEvent, item: BrowseRow) => {
+    if (dataSet !== "skills" && dataSet !== "project") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const p = item.sourcePath?.trim();
+    if (!p) return;
+    const pad = 8;
+    const approxW = 220;
+    const approxH = 44;
+    const vw = typeof window !== "undefined" ? window.innerWidth : e.clientX;
+    const vh = typeof window !== "undefined" ? window.innerHeight : e.clientY;
+    const x = Math.min(Math.max(pad, e.clientX), Math.max(pad, vw - approxW - pad));
+    const y = Math.min(Math.max(pad, e.clientY), Math.max(pad, vh - approxH - pad));
+    setCardContextMenu({ x, y, path: p });
+  };
+
+  function renderBrowseCard(item: BrowseRow) {
+    return (
+      <article
+        key={item.id}
+        className="skill-card"
+        title={
+          dataSet === "skills" || dataSet === "project"
+            ? "右键菜单：在所在目录中显示"
+            : undefined
+        }
+        onClick={() => openDetail(item)}
+        onContextMenu={
+          dataSet === "skills" || dataSet === "project"
+            ? (e) => onCardContextMenu(e, item)
+            : undefined
+        }
+        style={{ cursor: "pointer" }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openDetail(item);
+          }
+        }}
+      >
+        <div className="skill-card__title-row">
+          <span className="skill-card__radio" aria-hidden />
+          <span className="skill-card__title">{item.title}</span>
+          <span
+            className={`skill-card__kind skill-card__kind--${item.kind}`}
+            aria-label={`类型：${FILTER_LABEL[item.kind]}`}
+          >
+            {FILTER_LABEL[item.kind]}
+          </span>
+        </div>
+        <p className="skill-card__desc">{item.desc}</p>
+        {dataSet === "aggregate" && item.tags.length > 0 ? (
+          <div className="skill-card__tags" aria-label="来源标签">
+            {item.tags.map((t, i) => (
+              <span key={`${item.id}-tag-${i}`} className="skill-card__tag">
+                {t}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </article>
+    );
+  }
 
   return (
     <>
       <div className="page-header">
         <div className="page-title__row">
           <h2 style={{ margin: 0 }}>{title}</h2>
-          <span className="count-badge">{items.length}</span>
+          <span className="count-badge">{listedTotal}</span>
         </div>
         {subtitle ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.88rem" }}>
             {subtitle}
           </p>
         ) : null}
-        {ecosystem && dataSet === "skills" ? (
+        {ecosystem && dataSet === "skills" && (liveLoading || liveFailed) ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {liveLoading
-              ? "正在读取本机全局目录（不含项目内配置）…"
-              : liveFailed
-                ? "无法读取本机配置：请在 AIControls 桌面端运行，或检查权限。"
-                : showLiveSubtitle
-                  ? "以下为该 Agent 用户级全局 Skills、MCP 与 Rules（不含 .cursor 等项目目录）。"
-                  : null}
+              ? "正在读取该 Agent 的用户级全局目录与侧栏已添加项目…"
+              : "无法读取用户级全局目录：仍可查看侧栏项目中归属该 Agent 的配置；请在桌面端运行或检查权限。"}
           </p>
         ) : null}
         {dataSet === "project" &&
@@ -601,56 +815,78 @@ export default function SkillBrowseShell({
         </div>
       </div>
 
-      <div className="skill-grid">
-        {items.map((item) => (
-          <article
-            key={item.id}
-            className="skill-card"
-            onClick={() =>
-              setSelectedEntry({
-                id: item.id,
-                kind: item.kind,
-                title: item.title,
-                description: item.desc,
-                path: item.sourcePath,
-              })
-            }
-            style={{ cursor: "pointer" }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setSelectedEntry({
-                  id: item.id,
-                  kind: item.kind,
-                  title: item.title,
-                  description: item.desc,
-                  path: item.sourcePath,
-                });
-              }
+      {sections.map((sec) => {
+        if (!sec.title) {
+          return (
+            <div key={sec.key} className="skill-grid">
+              {sec.rows.map((item) => renderBrowseCard(item))}
+            </div>
+          );
+        }
+
+        const expanded = expandedSectionKeys.has(sec.key);
+        const frag = sectionIdSafeFragment(sec.key);
+        const headerId = `${browseSectionDomPrefix}-h-${frag}`;
+        const panelId = `${browseSectionDomPrefix}-p-${frag}`;
+
+        return (
+          <section key={sec.key} className="browse-section">
+            <div className="browse-section__header">
+              <button
+                type="button"
+                id={headerId}
+                className="browse-section__toggle"
+                aria-expanded={expanded}
+                aria-controls={panelId}
+                onClick={() => toggleSectionExpanded(sec.key)}
+              >
+                <span className="browse-section__chevron" aria-hidden>
+                  ▾
+                </span>
+                <span className="browse-section__title">{sec.title}</span>
+                <span className="count-badge">{sec.rows.length}</span>
+              </button>
+            </div>
+            {expanded ? (
+              <div
+                id={panelId}
+                className="skill-grid"
+                role="region"
+                aria-labelledby={headerId}
+              >
+                {sec.rows.map((item) => renderBrowseCard(item))}
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
+
+      {cardContextMenu ? (
+        <div
+          ref={cardContextMenuRef}
+          className="card-context-menu"
+          style={{
+            position: "fixed",
+            left: cardContextMenu.x,
+            top: cardContextMenu.y,
+            zIndex: 10_000,
+          }}
+          role="menu"
+          aria-label="卡片操作"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="card-context-menu__item"
+            onClick={() => {
+              void revealPathInFolder(cardContextMenu.path);
+              setCardContextMenu(null);
             }}
           >
-            <div className="skill-card__title-row">
-              <span className="skill-card__radio" aria-hidden />
-              <span className="skill-card__title">{item.title}</span>
-            </div>
-            <p className="skill-card__desc">{item.desc}</p>
-            {item.sourcePath ? (
-              <p
-                className="muted"
-                style={{
-                  margin: "0.35rem 0 0",
-                  fontSize: "0.78rem",
-                  wordBreak: "break-all",
-                }}
-              >
-                {item.sourcePath}
-              </p>
-            ) : null}
-          </article>
-        ))}
-      </div>
+            在所在目录中显示
+          </button>
+        </div>
+      ) : null}
 
       {/* Skill 详情面板 */}
       <SkillDetailPanel
@@ -658,7 +894,7 @@ export default function SkillBrowseShell({
         onClose={() => setSelectedEntry(null)}
       />
 
-      {items.length === 0 &&
+      {listedTotal === 0 &&
       !(ecosystem && dataSet === "skills" && (liveLoading || liveFailed)) &&
       !(dataSet === "project" && projectLoading) &&
       !(dataSet === "aggregate" && (aggregateLoading || aggregateSnapshot === null)) ? (

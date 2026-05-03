@@ -231,7 +231,10 @@ fn push_if_file(path: PathBuf, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Shallow `*.json` / `*.jsonc` in a directory (legacy agent rule bundles), excluding MCP duplicates.
+/// Basenames that are `*.json` on disk but editor/runtime config — not agent rule bundles.
+const RULE_JSON_SHALLOW_EXCLUDE: &[&str] = &["mcp.json", "argv.json"];
+
+/// Shallow `*.json` / `*.jsonc` in a directory (legacy agent rule bundles), excluding MCP and known non-rule JSON.
 fn push_json_jsonc_in_dir_shallow(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -245,8 +248,10 @@ fn push_json_jsonc_in_dir_shallow(dir: &Path, out: &mut Vec<PathBuf>) {
         if !matches!(ext, Some("json") | Some("jsonc")) {
             continue;
         }
-        if p.file_name().and_then(|n| n.to_str()) == Some("mcp.json") {
-            continue;
+        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+            if RULE_JSON_SHALLOW_EXCLUDE.contains(&name) {
+                continue;
+            }
         }
         out.push(p);
     }

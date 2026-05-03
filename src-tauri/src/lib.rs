@@ -61,6 +61,63 @@ async fn deepseek_classify_inventory(
     deepseek::classify_inventory_missing(&app, inventory).await
 }
 
+/// 在系统文件管理器中打开路径：文件则打开其所在文件夹并选中；文件夹则打开该文件夹。
+#[tauri::command]
+fn reveal_path_in_folder(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("路径为空".into());
+    }
+    let p = std::path::Path::new(path);
+    if !p.exists() {
+        return Err("路径不存在".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let st = if p.is_dir() {
+            Command::new("open").arg(p).status()
+        } else {
+            Command::new("open").arg("-R").arg(p).status()
+        };
+        st.map_err(|e| format!("无法打开访达: {e}"))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if p.is_dir() {
+            Command::new("explorer")
+                .arg(p)
+                .status()
+                .map_err(|e| format!("无法打开资源管理器: {e}"))?;
+        } else {
+            let arg = format!("/select,{}", p.to_string_lossy());
+            Command::new("explorer")
+                .arg(arg)
+                .status()
+                .map_err(|e| format!("无法打开资源管理器: {e}"))?;
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        use std::process::Command;
+        let dir = if p.is_dir() {
+            p.to_path_buf()
+        } else {
+            p.parent()
+                .ok_or_else(|| "无法解析父目录".to_string())?
+                .to_path_buf()
+        };
+        Command::new("xdg-open")
+            .arg(&dir)
+            .status()
+            .map_err(|e| format!("无法打开文件管理器: {e}"))?;
+    }
+
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -73,6 +130,7 @@ pub fn run() {
             save_deepseek_settings,
             test_deepseek_connection,
             deepseek_classify_inventory,
+            reveal_path_in_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
