@@ -1,0 +1,3 @@
+{
+  "releaseNotes": "- feat: 首页项目打开链（VS Code→Cursor→文件夹）、自定义应用与菜单；Tauri 与技能浏览/复制调整，移除 bbfaban skill"
+}
