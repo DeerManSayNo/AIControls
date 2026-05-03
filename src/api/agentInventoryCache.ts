@@ -3,6 +3,7 @@ import {
   scanProjectDirectory,
   type AgentInventory,
 } from "./agents";
+import { getProjectLatestMtimeMs } from "./projectMtime";
 import { normalizeProjectPath } from "../projectPathsStorage";
 
 const projectInvCache = new Map<string, AgentInventory | null>();
@@ -10,6 +11,9 @@ const projectInflight = new Map<string, Promise<AgentInventory | null>>();
 
 const agentGlobalInvCache = new Map<string, AgentInventory | null>();
 const agentGlobalInflight = new Map<string, Promise<AgentInventory | null>>();
+
+const projectMtimeCache = new Map<string, number | null>();
+const projectMtimeInflight = new Map<string, Promise<number | null>>();
 
 /** 会话内缓存的项目扫描结果；切换路由复用，避免重复读盘。 */
 export async function scanProjectDirectoryCached(
@@ -27,6 +31,26 @@ export async function scanProjectDirectoryCached(
       return inv;
     });
     projectInflight.set(key, p);
+  }
+  return p;
+}
+
+/** 会话内缓存的项目「最新修改时间」；切换路由复用，避免重复读盘。 */
+export async function getProjectLatestMtimeMsCached(
+  root: string,
+): Promise<number | null> {
+  const key = normalizeProjectPath(root);
+  if (projectMtimeCache.has(key)) {
+    return projectMtimeCache.get(key)!;
+  }
+  let p = projectMtimeInflight.get(key);
+  if (!p) {
+    p = getProjectLatestMtimeMs(root).then((ms) => {
+      projectMtimeCache.set(key, ms);
+      projectMtimeInflight.delete(key);
+      return ms;
+    });
+    projectMtimeInflight.set(key, p);
   }
   return p;
 }
@@ -54,11 +78,15 @@ export function invalidateCachedProjectInventory(root?: string): void {
   if (root === undefined) {
     projectInvCache.clear();
     projectInflight.clear();
+    projectMtimeCache.clear();
+    projectMtimeInflight.clear();
     return;
   }
   const key = normalizeProjectPath(root);
   projectInvCache.delete(key);
   projectInflight.delete(key);
+  projectMtimeCache.delete(key);
+  projectMtimeInflight.delete(key);
 }
 
 export function invalidateCachedAgentGlobalInventory(agentId?: string): void {

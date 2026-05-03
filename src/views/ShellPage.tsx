@@ -8,6 +8,7 @@ import {
   getAgentGlobalInventoryCached,
   invalidateCachedAgentGlobalInventory,
   invalidateCachedProjectInventory,
+  getProjectLatestMtimeMsCached,
   scanProjectDirectoryCached,
 } from "../api/agentInventoryCache";
 import {
@@ -83,6 +84,9 @@ export default function ShellPage({ subtitle }: Props) {
       }
     >
   >({});
+  const [projectLatestMtimeMs, setProjectLatestMtimeMs] = useState<
+    Record<string, number | null>
+  >({});
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [homeScanBusy, setHomeScanBusy] = useState(false);
 
@@ -112,9 +116,10 @@ export default function ShellPage({ subtitle }: Props) {
     setHomeScanBusy(true);
     void (async () => {
       try {
-        const [agentInventories, scanInventories] = await Promise.all([
+        const [agentInventories, scanInventories, mtimeList] = await Promise.all([
           Promise.all(agentIds.map((id) => getAgentGlobalInventoryCached(id))),
           Promise.all(scanRoots.map((root) => scanProjectDirectoryCached(root))),
+          Promise.all(scanRoots.map((root) => getProjectLatestMtimeMsCached(root))),
         ]);
         if (cancelled) return;
 
@@ -141,9 +146,11 @@ export default function ShellPage({ subtitle }: Props) {
             topAgent: string;
           }
         > = {};
+        const nextProjectMtime: Record<string, number | null> = {};
         for (let i = 0; i < scanRoots.length; i += 1) {
           const root = scanRoots[i];
           const inv = scanInventories[i];
+          nextProjectMtime[root] = mtimeList[i] ?? null;
           if (inv) {
             const topBucket = bucketInventoryByAgent(inv).sort(
               (a, b) => inventoryAssetCount(b.inv) - inventoryAssetCount(a.inv),
@@ -165,6 +172,7 @@ export default function ShellPage({ subtitle }: Props) {
         }
 
         setProjectStats(nextProjectStats);
+        setProjectLatestMtimeMs(nextProjectMtime);
         setTotals({
           skills: skillIds.size,
           mcp: mcpIds.size,
@@ -179,6 +187,19 @@ export default function ShellPage({ subtitle }: Props) {
       cancelled = true;
     };
   }, [detectedAgents, projectPaths, homeRefreshKey]);
+
+  const formatProjectLatestUpdate = (root: string): string => {
+    const ms = projectLatestMtimeMs[root];
+    if (ms == null) return "最近修改：—";
+    const dt = new Date(ms);
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    const yy = pad2(dt.getFullYear() % 100);
+    const mm = pad2(dt.getMonth() + 1);
+    const dd = pad2(dt.getDate());
+    const hh = pad2(dt.getHours());
+    const mi = pad2(dt.getMinutes());
+    return `UP:${yy}${mm}${dd}-${hh}:${mi}`;
+  };
 
   const metrics = useMemo(
     () => [
@@ -205,10 +226,10 @@ export default function ShellPage({ subtitle }: Props) {
           mcp: stat?.mcp ?? 0,
           rules: stat?.rules ?? 0,
           agent: stat?.topAgent ?? topAgent,
-          updated: stat?.status === "error" ? "扫描失败" : "已扫描",
+          updated: stat?.status === "error" ? "扫描失败" : formatProjectLatestUpdate(path),
         };
       }),
-    [detectedAgents, projectPaths, projectStats],
+    [detectedAgents, projectPaths, projectStats, projectLatestMtimeMs],
   );
 
   const renderMetricIcon = (key: string) => {

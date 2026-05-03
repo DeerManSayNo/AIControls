@@ -8,6 +8,61 @@ mod storage;
 use scan::AgentInventory;
 use tauri::AppHandle;
 
+fn latest_file_mtime_in_dir(root: &std::path::Path) -> Result<i64, String> {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    if !root.exists() {
+        return Err("路径不存在".into());
+    }
+    if !root.is_dir() {
+        return Err("路径不是文件夹".into());
+    }
+
+    let mut best: Option<SystemTime> = None;
+    let mut stack: Vec<std::path::PathBuf> = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let md = fs::metadata(&dir).ok();
+        if let Some(m) = md.and_then(|m| m.modified().ok()) {
+            best = Some(best.map_or(m, |cur| cur.max(m)));
+        }
+
+        let Ok(rd) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for ent in rd.flatten() {
+            let path = ent.path();
+            // Avoid following symlink directories (can introduce cycles).
+            let ft = ent.file_type().ok();
+            if ft.as_ref().is_some_and(|t| t.is_symlink()) {
+                let md = fs::symlink_metadata(&path).ok();
+                if let Some(m) = md.and_then(|m| m.modified().ok()) {
+                    best = Some(best.map_or(m, |cur| cur.max(m)));
+                }
+                continue;
+            }
+
+            let md = ent.metadata().ok();
+            if let Some(m) = md.as_ref().and_then(|m| m.modified().ok()) {
+                best = Some(best.map_or(m, |cur| cur.max(m)));
+            }
+            if md.as_ref().is_some_and(|m| m.is_dir()) {
+                stack.push(path);
+            }
+        }
+    }
+
+    let Some(t) = best else {
+        return Err("无法读取目录修改时间".into());
+    };
+    let ms = t
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "无法解析修改时间".to_string())?
+        .as_millis();
+    Ok(ms as i64)
+}
+
 #[tauri::command]
 fn list_detected_agents() -> Vec<scan::AgentScanResult> {
     scan::detect_agents()
@@ -265,6 +320,12 @@ fn open_project_path(path: String, application_path: Option<String>) -> Result<(
     }
 }
 
+/// 递归扫描目录，返回目录下（含子文件/子目录）的最新修改时间（Unix 毫秒）。
+#[tauri::command]
+fn get_project_latest_mtime_ms(root: String) -> Result<i64, String> {
+    latest_file_mtime_in_dir(std::path::Path::new(root.trim()))
+}
+
 #[tauri::command]
 fn list_visible_project_skill_buckets(
     project_root: String,
@@ -316,6 +377,7 @@ pub fn run() {
             deepseek_summarize_inventory,
             reveal_path_in_folder,
             open_project_path,
+            get_project_latest_mtime_ms,
             copy_skill_package,
             delete_skill_at_path,
             list_visible_project_skill_buckets,
