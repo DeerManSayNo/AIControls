@@ -284,6 +284,56 @@ main {
   min-width: 0;
 }
 
+.toolbar__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.scenario-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.scenario-chip {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.scenario-chip:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+.scenario-chip.active {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.toolbar__deepseek-status {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 .toolbar__right {
   display: flex;
   align-items: center;
@@ -314,6 +364,23 @@ main {
   background: transparent;
   padding: 0;
   width: 100%;
+}
+
+.settings-input {
+  display: block;
+  width: min(520px, 100%);
+  box-sizing: border-box;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .seg {
@@ -403,6 +470,19 @@ main {
   .toolbar__left {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .toolbar__stack {
+    align-items: stretch;
+  }
+
+  .toolbar__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .scenario-strip {
+    padding-top: 0.05rem;
   }
   .toolbar__right {
     justify-content: flex-end;

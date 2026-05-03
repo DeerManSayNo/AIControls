@@ -9,6 +9,8 @@ export type AssetEntry = {
   description: string;
   path: string;
   active: boolean;
+  /** DeepSeek 持久化分类：`dev` | `office` | … */
+  scenario?: string | null;
 };
 
 export type AgentInventory = {

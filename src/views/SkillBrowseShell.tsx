@@ -1,6 +1,10 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+  deepseekClassifyInventory,
+  getDeepseekSettings,
+} from "../api/deepseek";
+import {
   getAgentGlobalInventory,
   listDetectedAgents,
   scanProjectDirectory,
@@ -9,6 +13,13 @@ import {
 } from "../api/agents";
 import { useProjectPaths } from "../projectPathsStorage";
 import { SkillDetailPanel, type DetailEntry } from "../components/SkillDetailPanel";
+import {
+  rowMatchesScenarioChip,
+  SCENARIO_HINT,
+  SCENARIO_LABEL,
+  SCENARIO_ORDER,
+  type ScenarioKey,
+} from "../skillScenarioCategories";
 
 type AssetKind = "skill" | "mcp" | "rule";
 
@@ -22,6 +33,8 @@ type BrowseRow = {
   active: boolean;
   /** 本机路径或占位 id */
   sourcePath?: string;
+  /** DeepSeek 分类 slug；未命中时用关键词兜底 */
+  scenario?: string | null;
 };
 
 /** 与 App 侧栏 Agent 名称一致；在「全部」汇总页用于兜底扫描 */
@@ -44,6 +57,68 @@ type AggregateSnapshot = {
   projects: { path: string; inv: AgentInventory | null }[];
   anyInventoryFailed: boolean;
 };
+
+function dedupeMergeInventories(parts: AgentInventory[]): AgentInventory {
+  const seen = new Set<string>();
+  const skills: AssetEntry[] = [];
+  const mcp: AssetEntry[] = [];
+  const rules: AssetEntry[] = [];
+  const pushUnique = (bucket: AssetEntry[], e: AssetEntry) => {
+    if (seen.has(e.id)) return;
+    seen.add(e.id);
+    bucket.push(e);
+  };
+  for (const inv of parts) {
+    for (const e of inv.skills) pushUnique(skills, e);
+    for (const e of inv.mcp) pushUnique(mcp, e);
+    for (const e of inv.rules) pushUnique(rules, e);
+  }
+  return { skills, mcp, rules };
+}
+
+function scenarioMapFromInventory(inv: AgentInventory): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const e of [...inv.skills, ...inv.mcp, ...inv.rules]) {
+    if (e.scenario) m.set(e.id, e.scenario);
+  }
+  return m;
+}
+
+function patchAgentInventory(
+  inv: AgentInventory,
+  map: Map<string, string>,
+): AgentInventory {
+  const patch = (e: AssetEntry): AssetEntry => ({
+    ...e,
+    scenario: map.get(e.id) ?? e.scenario ?? null,
+  });
+  return {
+    skills: inv.skills.map(patch),
+    mcp: inv.mcp.map(patch),
+    rules: inv.rules.map(patch),
+  };
+}
+
+function patchAggregateSnapshot(
+  snap: AggregateSnapshot,
+  map: Map<string, string>,
+): AggregateSnapshot {
+  return {
+    agents: snap.agents.map((a) => ({
+      ...a,
+      inv: a.inv ? patchAgentInventory(a.inv, map) : null,
+    })),
+    projects: snap.projects.map((p) => ({
+      ...p,
+      inv: p.inv ? patchAgentInventory(p.inv, map) : null,
+    })),
+    anyInventoryFailed: snap.anyInventoryFailed,
+  };
+}
+
+function inventoryAssetCount(inv: AgentInventory): number {
+  return inv.skills.length + inv.mcp.length + inv.rules.length;
+}
 
 type FilterKey = "all" | AssetKind;
 
@@ -72,6 +147,7 @@ function inventoryToRows(
       tags: [FILTER_LABEL[kind], agentTitle],
       active: e.active,
       sourcePath: e.path,
+      scenario: e.scenario ?? null,
     });
   };
   for (const e of inv.skills) push(e, "skill");
@@ -102,6 +178,7 @@ export default function SkillBrowseShell({
   const searchFieldId = useId();
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState("");
+  const [scenario, setScenario] = useState<ScenarioKey>("all");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [selectedEntry, setSelectedEntry] = useState<DetailEntry | null>(null);
   const [liveInv, setLiveInv] = useState<AgentInventory | null | undefined>(
@@ -121,6 +198,7 @@ export default function SkillBrowseShell({
   const [aggregateLoading, setAggregateLoading] = useState(
     () => dataSet === "aggregate",
   );
+  const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
 
   useEffect(() => {
     const k = searchParams.get("kind");
@@ -139,7 +217,7 @@ export default function SkillBrowseShell({
     let cancelled = false;
     setLiveLoading(true);
     setLiveFailed(false);
-    getAgentGlobalInventory(ecosystem).then((data) => {
+    getAgentGlobalInventory(ecosystem).then(async (data) => {
       if (cancelled) return;
       setLiveLoading(false);
       if (data === null) {
@@ -147,7 +225,14 @@ export default function SkillBrowseShell({
         setLiveFailed(true);
         return;
       }
+      setLiveFailed(false);
       setLiveInv(data);
+      const cfg = await getDeepseekSettings();
+      if (cancelled || !cfg?.apiKeyConfigured) return;
+      setAiScenarioBusy(true);
+      const next = await deepseekClassifyInventory(data);
+      if (!cancelled && next) setLiveInv(next);
+      if (!cancelled) setAiScenarioBusy(false);
     });
     return () => {
       cancelled = true;
@@ -170,7 +255,7 @@ export default function SkillBrowseShell({
     let cancelled = false;
     setProjectLoading(true);
     setProjectFailed(false);
-    scanProjectDirectory(projectRoot).then((data) => {
+    scanProjectDirectory(projectRoot).then(async (data) => {
       if (cancelled) return;
       setProjectLoading(false);
       if (data === null) {
@@ -178,7 +263,14 @@ export default function SkillBrowseShell({
         setProjectFailed(true);
         return;
       }
+      setProjectFailed(false);
       setProjectInv(data);
+      const cfg = await getDeepseekSettings();
+      if (cancelled || !cfg?.apiKeyConfigured) return;
+      setAiScenarioBusy(true);
+      const next = await deepseekClassifyInventory(data);
+      if (!cancelled && next) setProjectInv(next);
+      if (!cancelled) setAiScenarioBusy(false);
     });
     return () => {
       cancelled = true;
@@ -228,12 +320,39 @@ export default function SkillBrowseShell({
         agentResults.some((r) => r.inv === null) ||
         projectResults.some((r) => r.inv === null);
 
-      setAggregateSnapshot({
+      const snapshot: AggregateSnapshot = {
         agents: agentResults,
         projects: projectResults,
         anyInventoryFailed,
-      });
+      };
+      setAggregateSnapshot(snapshot);
       setAggregateLoading(false);
+
+      const parts: AgentInventory[] = [];
+      for (const a of agentResults) {
+        if (a.inv) parts.push(a.inv);
+      }
+      for (const p of projectResults) {
+        if (p.inv) parts.push(p.inv);
+      }
+      const merged = dedupeMergeInventories(parts);
+      const cfg = await getDeepseekSettings();
+      if (
+        cancelled ||
+        !cfg?.apiKeyConfigured ||
+        inventoryAssetCount(merged) === 0
+      ) {
+        return;
+      }
+      setAiScenarioBusy(true);
+      const classified = await deepseekClassifyInventory(merged);
+      if (!cancelled && classified) {
+        const map = scenarioMapFromInventory(classified);
+        setAggregateSnapshot((prev) =>
+          prev ? patchAggregateSnapshot(prev, map) : prev,
+        );
+      }
+      if (!cancelled) setAiScenarioBusy(false);
     })();
 
     return () => {
@@ -265,6 +384,9 @@ export default function SkillBrowseShell({
               r.desc.toLowerCase().includes(q) ||
               (r.sourcePath?.toLowerCase().includes(q) ?? false),
           );
+        }
+        if (scenario !== "all") {
+          rows = rows.filter((r) => rowMatchesScenarioChip(r, scenario));
         }
         return rows;
       }
@@ -307,6 +429,9 @@ export default function SkillBrowseShell({
             (r.sourcePath?.toLowerCase().includes(q) ?? false),
         );
       }
+      if (scenario !== "all") {
+        rows = rows.filter((r) => rowMatchesScenarioChip(r, scenario));
+      }
       return rows;
     }
 
@@ -331,6 +456,9 @@ export default function SkillBrowseShell({
               (r.sourcePath?.toLowerCase().includes(q) ?? false),
           );
         }
+        if (scenario !== "all") {
+          rows = rows.filter((r) => rowMatchesScenarioChip(r, scenario));
+        }
         return rows;
       }
     }
@@ -340,6 +468,7 @@ export default function SkillBrowseShell({
     dataSet,
     ecosystem,
     filter,
+    scenario,
     query,
     liveInv,
     liveFailed,
@@ -359,13 +488,6 @@ export default function SkillBrowseShell({
     liveInv &&
     !liveFailed &&
     !liveLoading;
-
-  const showProjectHint =
-    dataSet === "project" &&
-    projectRoot &&
-    projectInv &&
-    !projectFailed &&
-    !projectLoading;
 
   return (
     <>
@@ -390,17 +512,13 @@ export default function SkillBrowseShell({
                   : null}
           </p>
         ) : null}
-        {dataSet === "project" ? (
+        {dataSet === "project" &&
+        projectRoot &&
+        (projectLoading || projectFailed) ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-            {!projectRoot
-              ? null
-              : projectLoading
-                ? "正在扫描所选目录下各 Agent skills 目录、MCP（JSON）与规则文件…"
-                : projectFailed
-                  ? "无法扫描该目录：请在 AIControls 桌面端运行，或检查路径与权限。"
-                  : showProjectHint
-                    ? "以下为各 Agent 约定目录下的 Skills（如 .claude/skills、.cursor/skills 等下的 SKILL.md）、MCP（JSON）与 Rules，已忽略 node_modules 等无关目录；不扫描整仓库中任意位置的 SKILL.md。"
-                    : null}
+            {projectLoading
+              ? "正在扫描所选目录下各 Agent skills 目录、MCP（JSON）与规则文件…"
+              : "无法扫描该目录：请在 AIControls 桌面端运行，或检查路径与权限。"}
           </p>
         ) : null}
         {dataSet === "aggregate" ? (
@@ -415,35 +533,71 @@ export default function SkillBrowseShell({
       </div>
 
       <div className="toolbar">
-        <div className="toolbar__left">
-          <label className="search" htmlFor={searchFieldId}>
-            <span className="search__icon" aria-hidden>
-              ⌕
-            </span>
-            <input
-              id={searchFieldId}
-              className="search__input"
-              type="search"
-              placeholder="搜索标题、描述或路径…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              autoComplete="off"
-            />
-          </label>
-          <div className="seg" role="tablist" aria-label="类型筛选">
-            {SEGMENT_KEYS.map((k) => (
+        <div className="toolbar__stack">
+          <div className="toolbar__row">
+            <label className="search" htmlFor={searchFieldId}>
+              <span className="search__icon" aria-hidden>
+                ⌕
+              </span>
+              <input
+                id={searchFieldId}
+                className="search__input"
+                type="search"
+                placeholder="搜索标题、描述或路径…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <div className="seg" role="tablist" aria-label="类型筛选">
+              {SEGMENT_KEYS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === k}
+                  className={`seg__item${filter === k ? " active" : ""}`}
+                  onClick={() => setFilter(k)}
+                >
+                  {FILTER_LABEL[k]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="scenario-strip" role="tablist" aria-label="场景分类">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={scenario === "all"}
+              title="展示全部 Skill、MCP 与 Rules"
+              className={`scenario-chip${scenario === "all" ? " active" : ""}`}
+              onClick={() => setScenario("all")}
+            >
+              {SCENARIO_LABEL.all}
+            </button>
+            {SCENARIO_ORDER.map((key) => (
               <button
-                key={k}
+                key={key}
                 type="button"
                 role="tab"
-                aria-selected={filter === k}
-                className={`seg__item${filter === k ? " active" : ""}`}
-                onClick={() => setFilter(k)}
+                aria-selected={scenario === key}
+                title={SCENARIO_HINT[key]}
+                className={`scenario-chip${scenario === key ? " active" : ""}`}
+                onClick={() => setScenario(key)}
               >
-                {FILTER_LABEL[k]}
+                {SCENARIO_LABEL[key]}
               </button>
             ))}
           </div>
+          {aiScenarioBusy ? (
+            <p
+              className="muted toolbar__deepseek-status"
+              role="status"
+              aria-live="polite"
+            >
+              DeepSeek 正在为尚未写入本地缓存的条目补全场景分类，请稍候…
+            </p>
+          ) : null}
         </div>
       </div>
 

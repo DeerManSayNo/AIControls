@@ -8,7 +8,7 @@
 //! **Project Skills**: only `SKILL.md` under each agent’s conventional `skills` directory (not every
 //! `SKILL.md` in the repo — excludes ad-hoc trees like `.agent/skills`).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -20,7 +20,7 @@ pub struct AgentScanResult {
     pub label: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetEntry {
     pub id: String,
     pub kind: String,
@@ -28,13 +28,29 @@ pub struct AssetEntry {
     pub description: String,
     pub path: String,
     pub active: bool,
+    /// AI 分类：`dev` / `office` / `creative` / `data` / `network` / `ops` / `collab`
+    #[serde(default)]
+    pub scenario: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentInventory {
     pub skills: Vec<AssetEntry>,
     pub mcp: Vec<AssetEntry>,
     pub rules: Vec<AssetEntry>,
+}
+
+pub fn attach_scenarios(inv: &mut AgentInventory, map: &HashMap<String, String>) {
+    for e in inv
+        .skills
+        .iter_mut()
+        .chain(inv.mcp.iter_mut())
+        .chain(inv.rules.iter_mut())
+    {
+        if let Some(s) = map.get(&e.id) {
+            e.scenario = Some(s.clone());
+        }
+    }
 }
 
 fn home_dir() -> PathBuf {
@@ -512,6 +528,7 @@ fn push_skills_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             description: desc,
             path: p.to_string_lossy().into_owned(),
             active: true,
+            scenario: None,
         });
     }
 }
@@ -551,6 +568,7 @@ fn push_rules_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             description: desc,
             path: p.to_string_lossy().into_owned(),
             active: true,
+            scenario: None,
         });
     }
 }
@@ -613,6 +631,7 @@ fn parse_mcp_object_at(
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| format!("mcp:{name}")),
             active: true,
+            scenario: None,
         });
     }
 }

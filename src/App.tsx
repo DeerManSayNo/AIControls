@@ -16,6 +16,7 @@ import {
   useProjectPaths,
 } from "./projectPathsStorage";
 import ShellPage from "./views/ShellPage";
+import SettingsPage from "./views/SettingsPage";
 import SkillBrowseShell from "./views/SkillBrowseShell";
 
 function navClass(active: boolean) {
@@ -136,7 +137,7 @@ export default function App() {
           path="/assets"
           element={<SkillBrowseShell title="全部" dataSet="aggregate" />}
         />
-        <Route path="/settings" element={<ShellPage title="设置" />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="/agent/:ecosystem" element={<AgentRoute />} />
         <Route path="/project" element={<ProjectRoute />} />
       </Routes>
