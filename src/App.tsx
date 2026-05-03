@@ -1,5 +1,20 @@
 import type { ReactNode } from "react";
-import { NavLink, Route, Routes, useParams, useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
+import {
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
+import AddProjectNavButton from "./components/AddProjectNavButton";
+import AgentNavLinks from "./components/AgentNavLinks";
+import {
+  appendProjectPath,
+  pathsReferToSameDir,
+  useProjectPaths,
+} from "./projectPathsStorage";
 import ShellPage from "./views/ShellPage";
 import SkillBrowseShell from "./views/SkillBrowseShell";
 
@@ -7,7 +22,25 @@ function navClass(active: boolean) {
   return `side-nav-link${active ? " active" : ""}`;
 }
 
+function folderBasename(path: string): string {
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+}
+
 function Layout({ children }: { children: ReactNode }) {
+  const [searchParams] = useSearchParams();
+  const { pathname } = useLocation();
+  const pathFromUrl = searchParams.get("path");
+  const projectPaths = useProjectPaths();
+
+  useEffect(() => {
+    if (pathFromUrl) {
+      appendProjectPath(pathFromUrl);
+    }
+  }, [pathFromUrl]);
+
+  const activeProjectPath =
+    pathname === "/project" ? searchParams.get("path") : null;
+
   return (
     <div className="app-shell">
       <aside className="side-nav" aria-label="主导航">
@@ -20,36 +53,26 @@ function Layout({ children }: { children: ReactNode }) {
         </NavLink>
 
         <div className="side-nav-section-label">Agent</div>
-        <NavLink
-          to="/agent/cursor"
-          className={({ isActive }) => navClass(isActive)}
-        >
-          Cursor
-        </NavLink>
-        <NavLink
-          to="/agent/claude"
-          className={({ isActive }) => navClass(isActive)}
-        >
-          Claude Code
-        </NavLink>
+        <AgentNavLinks />
 
         <div className="side-nav-section-label">全部项目</div>
-        <NavLink
-          to="/project"
-          className={({ isActive }) => navClass(isActive)}
-          title="示例"
-        >
-          示例项目
-        </NavLink>
-        <NavLink
-          to="/projects"
-          className={({ isActive }) =>
-            `side-nav-link side-nav-action${isActive ? " active" : ""}`
-          }
-          title="添加/管理项目路径"
-        >
-          + 添加项目
-        </NavLink>
+        {projectPaths.map((p) => {
+          const to = `/project?path=${encodeURIComponent(p)}`;
+          const isCurrent =
+            activeProjectPath !== null &&
+            pathsReferToSameDir(activeProjectPath, p);
+          return (
+            <NavLink
+              key={p}
+              to={to}
+              className={() => navClass(isCurrent)}
+              title={p}
+            >
+              {folderBasename(p)}
+            </NavLink>
+          );
+        })}
+        <AddProjectNavButton />
 
         <div className="side-nav-footer">
           <NavLink
@@ -68,31 +91,37 @@ function Layout({ children }: { children: ReactNode }) {
   );
 }
 
+const AGENT_TITLES: Record<string, string> = {
+  cursor: "Cursor",
+  claude: "Claude Code",
+  trae: "Trae",
+  qoder: "Qoder",
+};
+
 function AgentRoute() {
   const { ecosystem } = useParams();
-  const eco =
-    ecosystem === "claude"
-      ? "claude"
-      : ecosystem === "cursor"
-        ? "cursor"
-        : undefined;
+  const eco = ecosystem && AGENT_TITLES[ecosystem] ? ecosystem : undefined;
   const title =
-    ecosystem === "claude"
-      ? "Claude Code"
-      : ecosystem === "cursor"
-        ? "Cursor"
-        : `Agent：${ecosystem ?? "—"}`;
+    ecosystem && AGENT_TITLES[ecosystem]
+      ? AGENT_TITLES[ecosystem]
+      : `Agent：${ecosystem ?? "—"}`;
   return <SkillBrowseShell title={title} ecosystem={eco} />;
 }
 
 function ProjectRoute() {
   const [sp] = useSearchParams();
   const path = sp.get("path");
+  const folderTitle =
+    path != null && path.length > 0 ? folderBasename(path) : "项目";
+
   return (
     <SkillBrowseShell
-      title="示例项目"
+      title={folderTitle}
       dataSet="project"
-      subtitle={path ? `路径：${path}` : undefined}
+      projectRoot={path ?? undefined}
+      subtitle={
+        path ? `路径：${path}` : "请点击侧栏「添加项目」选择本地文件夹。"
+      }
     />
   );
 }
@@ -103,7 +132,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<ShellPage title="首页" />} />
         <Route path="/assets" element={<SkillBrowseShell title="全部 Skills" />} />
-        <Route path="/projects" element={<ShellPage title="项目管理" />} />
         <Route path="/settings" element={<ShellPage title="设置" />} />
         <Route path="/agent/:ecosystem" element={<AgentRoute />} />
         <Route path="/project" element={<ProjectRoute />} />
