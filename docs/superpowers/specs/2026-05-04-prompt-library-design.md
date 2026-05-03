@@ -27,6 +27,12 @@
 - **存储**：纯本地；**单文件 JSON**（位于 Tauri `app_local_data_dir`）
 - **体量预期**：200–2000 条
 
+### 不变量（必须满足）
+
+- 每个 `type` 都有且仅有一个根文件夹；根文件夹 `id` 固定为 `"image" | "code" | "doc" | "text"`，且 `parentId = null`。
+- 任意 `Folder` 必须可追溯到某个 `type` 根；禁止跨 type 挂载（folder 的祖先链必须落在同一根）。
+- 任意 `PromptItem.type` 必须与其所在 `folderId` 的 `type` 一致；不允许出现不一致数据（读取时需修复或隔离坏数据并提示）。
+
 ## 信息架构（IA）
 
 ### 侧栏
@@ -41,7 +47,10 @@
   - 文件夹树：默认聚焦当前 Tab 的根文件夹；可切换子文件夹
   - 标签筛选：多选（常用标签可快速点选）
 - **主内容区**：
-  - 搜索框：按标题 / prompt / 标签 / 备注（实现可分期，至少标题 + prompt + 标签）
+  - 搜索框：对**当前 Tab（type）**内数据生效；默认搜索范围为**当前选中文件夹的子树**（含所有子文件夹）。
+    - 匹配字段（v1）：`title`、`prompt`、`tags`（`note` 后续迭代）
+    - 组合逻辑：文件夹范围 AND 标签筛选 AND 搜索关键字
+    - tags 匹配：以 tag token **精确匹配**（大小写不敏感；存储时规范化为小写）
   - 紧凑列表：每行显示类型图标、标题、标签（最多 2 个 + “+N”）、右侧固定 `复制` 按钮
   - 点行打开右侧详情抽屉
 - **右侧详情抽屉**：
@@ -61,6 +70,14 @@
 交互：
 - 点击 `复制`：复制该条的 `prompt`
 - 点击行：打开详情抽屉（不触发复制）
+- 点击标签 chips / “+N”：不触发复制；默认行为与点行一致（打开抽屉）
+- 复制成功：展示轻提示（toast）并保持当前抽屉/选中态不变；复制失败：展示错误提示（例如剪贴板权限/系统失败）
+
+### 排序规则（v1）
+
+- 默认排序：`updatedAt desc`
+- 新建后置顶；编辑保存后置顶
+- 性能约束：在 2000 条规模下，搜索输入需保持流畅（建议 debounce；并对搜索字段做预计算/缓存，避免每次输入触发昂贵的重复计算）
 
 ### 新建收藏
 
@@ -96,25 +113,41 @@
 
 ### LibraryFile（单文件 JSON）
 
-- `version: number`
+- `version: number`（从 1 开始）
 - `folders: Folder[]`
   - 预置 4 个根 folder：image/code/doc/text
-  - 子文件夹：`parentId` 指向同 type 根或其子节点
+  - 子文件夹：`parentId` 指向同 type 树内节点
 - `items: PromptItem[]`
+
+### Folder
+
+- `id: string`（根 folder id 固定为 `"image" | "code" | "doc" | "text"`）
+- `name: string`（根 folder 展示名与 Tab 一致；子文件夹可编辑）
+- `parentId: string | null`（根为 null；子文件夹必须指向同 type 树内节点）
+- 约束：禁止循环引用；禁止重复 `id`；禁止跨 type parent 绑定
+
+读取修复策略：
+- 若 `PromptItem.folderId` 不存在：将该 item 自动迁移到其 `type` 根 folder，并提示“数据已修复”
+- 若发现 `PromptItem.type` 与 folder 所属 `type` 不一致：将 item 迁移到其 `type` 根 folder，并提示“数据已修复”
 
 ## 错误处理与数据安全
 
 ### JSON 写入可靠性
 
 为避免半写坏文件：
-- 写入临时文件（同目录）
-- fsync / flush（视平台能力）
-- 原子重命名覆盖正式文件
+- 写入采用：`prompt-library.json.tmp` → fsync(tmp) → 原子 rename 覆盖 `prompt-library.json`
+- 启动时恢复：
+  - 若存在 `.tmp` 且主文件缺失或解析失败：尝试用 `.tmp` 恢复
+  - 否则：清理 `.tmp`（必要时保留并提示其存在，供用户手工排查）
+- 额外备份：每次成功写入前，将现有主文件复制为 `prompt-library.json.bak`（仅保留 1 份）
+- 并发：写入必须串行化（单写队列/文件锁），避免并发覆盖
 
 ### 兼容与演进
 
-- `version` 字段用于后续 schema 迁移
-- 读取失败时提供清晰错误提示，并保留原文件以便手工恢复
+- `version` 从 1 开始。读取时：
+  - 若 `version` 小于当前：执行逐版本迁移到最新；迁移成功后**自动写回**，并保留 `.bak`
+  - 若 `version` 大于当前：进入**只读模式**并提示用户升级应用（不覆盖文件）
+  - 若校验失败：不覆盖原文件；尝试从 `.bak/.tmp` 恢复；失败则提示用户导出/修复
 
 ## 测试策略（实现阶段）
 
