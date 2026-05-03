@@ -12,9 +12,11 @@ import {
   getDeepseekSettings,
 } from "../api/deepseek";
 import {
-  getAgentGlobalInventory,
+  getAgentGlobalInventoryCached,
+  scanProjectDirectoryCached,
+} from "../api/agentInventoryCache";
+import {
   listDetectedAgents,
-  scanProjectDirectory,
   type AgentInventory,
   type AssetEntry,
 } from "../api/agents";
@@ -305,9 +307,9 @@ export default function SkillBrowseShell({
     setAgentProjectScans([]);
 
     (async () => {
-      const globalInv = await getAgentGlobalInventory(ecosystem);
+      const globalInv = await getAgentGlobalInventoryCached(ecosystem);
       const projList = await Promise.all(
-        projectPaths.map((path) => scanProjectDirectory(path)),
+        projectPaths.map((path) => scanProjectDirectoryCached(path)),
       );
       if (cancelled) return;
 
@@ -378,7 +380,7 @@ export default function SkillBrowseShell({
     let cancelled = false;
     setProjectLoading(true);
     setProjectFailed(false);
-    scanProjectDirectory(projectRoot).then(async (data) => {
+    scanProjectDirectoryCached(projectRoot).then(async (data) => {
       if (cancelled) return;
       setProjectLoading(false);
       if (data === null) {
@@ -426,14 +428,14 @@ export default function SkillBrowseShell({
         specs.map(async (spec) => ({
           id: spec.id,
           title: spec.title,
-          inv: await getAgentGlobalInventory(spec.id),
+          inv: await getAgentGlobalInventoryCached(spec.id),
         })),
       );
 
       const projectResults = await Promise.all(
         projectPaths.map(async (path) => ({
           path,
-          inv: await scanProjectDirectory(path),
+          inv: await scanProjectDirectoryCached(path),
         })),
       );
 
