@@ -127,3 +127,15 @@ export async function copySkillPackage(
     return { error: formatInvokeError(e) };
   }
 }
+
+/** 仅删除技能包文件夹（整目录删除）；散装 SKILL.md 会由后端拒绝。路径须能通过后端与复制相同的校验。 */
+export async function deleteSkillAtPath(
+  path: string,
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    await invoke<void>("delete_skill_at_path", { path });
+    return { ok: true };
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}

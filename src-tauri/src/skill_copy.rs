@@ -360,3 +360,29 @@ pub fn perform_copy(
 
     Ok(final_dir.to_string_lossy().into_owned())
 }
+
+/// 仅删除**技能包文件夹**（`remove_dir_all`）。`skills` 根下的散装 `SKILL.md` 只能复制，不提供整夹删除。
+pub fn perform_delete_skill(source_path: &str) -> Result<(), String> {
+    let trimmed = source_path.trim();
+    if trimmed.is_empty() {
+        return Err("路径为空".into());
+    }
+    let sk = resolve_skill_copy_source(Path::new(trimmed))?;
+    match sk {
+        SkillCopySource::Directory { root, .. } => {
+            fs::remove_dir_all(&root).map_err(|e| {
+                format!(
+                    "删除技能目录失败 ({e}): {}",
+                    root.to_string_lossy()
+                )
+            })?;
+        }
+        SkillCopySource::LooseMarkdown { .. } => {
+            return Err(
+                "当前技能为 skills 目录下的散装 SKILL.md，未形成技能文件夹；请整理为文件夹技能包后再删除，或在访达中手动删除该文件。"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}

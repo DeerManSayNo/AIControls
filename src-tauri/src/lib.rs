@@ -131,6 +131,140 @@ fn reveal_path_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 未指定应用时：依次尝试 Visual Studio Code、Cursor；均不可用时在文件管理器中打开该文件夹。
+fn open_project_folder_default_chain(p: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let try_app = |name: &str| -> bool {
+            Command::new("open")
+                .arg("-a")
+                .arg(name)
+                .arg(p)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if try_app("Visual Studio Code") {
+            return Ok(());
+        }
+        if try_app("Cursor") {
+            return Ok(());
+        }
+        let st = Command::new("open")
+            .arg(p)
+            .status()
+            .map_err(|e| format!("无法打开项目: {e}"))?;
+        if !st.success() {
+            return Err("打开项目失败".into());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let try_cli = |name: &str| -> bool {
+            Command::new(name)
+                .arg(p)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if try_cli("code") {
+            return Ok(());
+        }
+        if try_cli("cursor") {
+            return Ok(());
+        }
+        let st = Command::new("explorer")
+            .arg(p)
+            .status()
+            .map_err(|e| format!("无法打开项目: {e}"))?;
+        if !st.success() {
+            return Err("打开项目失败".into());
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        use std::process::Command;
+        let try_cli = |name: &str| -> bool {
+            Command::new(name)
+                .arg(p)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if try_cli("code") {
+            return Ok(());
+        }
+        if try_cli("cursor") {
+            return Ok(());
+        }
+        let st = Command::new("xdg-open")
+            .arg(p)
+            .status()
+            .map_err(|e| format!("无法打开项目: {e}"))?;
+        if !st.success() {
+            return Err("打开项目失败".into());
+        }
+    }
+    Ok(())
+}
+
+/// 打开项目根目录：未指定 `application_path` 时先试 VS Code，再试 Cursor，再打开所在文件夹；
+/// 指定时为该路径（如 `/Applications/Cursor.app` 或 Windows 下 `.exe` 全路径）打开此文件夹。
+#[tauri::command]
+fn open_project_path(path: String, application_path: Option<String>) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("路径为空".into());
+    }
+    let p = std::path::Path::new(path);
+    if !p.exists() {
+        return Err("路径不存在".into());
+    }
+    if !p.is_dir() {
+        return Err("路径不是文件夹".into());
+    }
+
+    let app = application_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    if let Some(a) = app {
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            let st = Command::new("open").arg("-a").arg(a).arg(p).status();
+            let code = st.map_err(|e| format!("无法打开项目: {e}"))?;
+            if !code.success() {
+                return Err("打开项目失败".into());
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use std::process::Command;
+            let st = Command::new(a).arg(p).status();
+            let code = st.map_err(|e| format!("无法打开项目: {e}"))?;
+            if !code.success() {
+                return Err("打开项目失败".into());
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            use std::process::Command;
+            let st = Command::new(a).arg(p).status();
+            let code = st.map_err(|e| format!("无法打开项目: {e}"))?;
+            if !code.success() {
+                return Err("打开项目失败".into());
+            }
+        }
+        Ok(())
+    } else {
+        open_project_folder_default_chain(p)
+    }
+}
+
 #[tauri::command]
 fn list_visible_project_skill_buckets(
     project_root: String,
@@ -162,6 +296,11 @@ fn copy_skill_package(
     )
 }
 
+#[tauri::command]
+fn delete_skill_at_path(path: String) -> Result<(), String> {
+    skill_copy::perform_delete_skill(&path)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -176,7 +315,9 @@ pub fn run() {
             deepseek_classify_inventory,
             deepseek_summarize_inventory,
             reveal_path_in_folder,
+            open_project_path,
             copy_skill_package,
+            delete_skill_at_path,
             list_visible_project_skill_buckets,
         ])
         .run(tauri::generate_context!())

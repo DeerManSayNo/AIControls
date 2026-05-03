@@ -22,6 +22,7 @@ import {
 } from "../api/agentInventoryCache";
 import {
   copySkillPackage,
+  deleteSkillAtPath,
   listDetectedAgents,
   type AgentInventory,
   type AssetEntry,
@@ -85,6 +86,12 @@ const FALLBACK_AGENT_IDS = ["cursor", "claude", "trae", "qoder", "kiro"] as cons
 
 function folderBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+}
+
+/** 列表里技能包为目录路径；散装 `SKILL.md` 以文件名结尾，只支持复制、不提供「删除文件夹」 */
+function skillBrowsePathIsDeletableFolder(sourcePath: string): boolean {
+  const t = sourcePath.trim().replace(/\\/g, "/");
+  return !/\/SKILL\.md$/i.test(t);
 }
 
 /** HTML `id` 安全片段（来自路径等分组 key） */
@@ -330,6 +337,11 @@ export default function SkillBrowseShell({
   const cardContextMenuRef = useRef<HTMLDivElement>(null);
   const [skillCopyTargetModalRow, setSkillCopyTargetModalRow] =
     useState<BrowseRow | null>(null);
+  /** 底部/顶部操作反馈吐司；`at` 变化时重置自动消失计时 */
+  const [shellToast, setShellToast] = useState<{
+    at: number;
+    message: string;
+  } | null>(null);
   /** 递增以使数据 useEffect 重新拉取（与手动刷新配合） */
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -366,6 +378,7 @@ export default function SkillBrowseShell({
   useEffect(() => {
     setCardContextMenu(null);
     setSkillCopyTargetModalRow(null);
+    setShellToast(null);
   }, [dataSet, ecosystem, projectRoot]);
 
   useEffect(() => {
@@ -393,6 +406,12 @@ export default function SkillBrowseShell({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [skillCopyTargetModalRow]);
+
+  useEffect(() => {
+    if (shellToast === null) return;
+    const t = window.setTimeout(() => setShellToast(null), 2600);
+    return () => window.clearTimeout(t);
+  }, [shellToast?.at]);
 
   useEffect(() => {
     if (!ecosystem || dataSet !== "skills") {
@@ -861,7 +880,13 @@ export default function SkillBrowseShell({
     e.stopPropagation();
     const pad = 8;
     const approxW = 220;
-    const approxH = item.kind === "skill" ? 88 : 48;
+    const skillPath = item.sourcePath?.trim() ?? "";
+    const skillHasDelete =
+      item.kind === "skill" &&
+      !!skillPath &&
+      skillBrowsePathIsDeletableFolder(skillPath);
+    const approxH =
+      item.kind === "skill" ? (skillHasDelete ? 132 : 88) : 48;
     const vw = typeof window !== "undefined" ? window.innerWidth : e.clientX;
     const vh = typeof window !== "undefined" ? window.innerHeight : e.clientY;
     const x = Math.min(Math.max(pad, e.clientX), Math.max(pad, vw - approxW - pad));
@@ -1116,17 +1141,52 @@ export default function SkillBrowseShell({
               </button>
               {cardContextMenu.row.kind === "skill" &&
               cardContextMenu.row.sourcePath?.trim() ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="card-context-menu__item"
-                  onClick={() => {
-                    setSkillCopyTargetModalRow(cardContextMenu.row);
-                    setCardContextMenu(null);
-                  }}
-                >
-                  复制到…
-                </button>
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="card-context-menu__item"
+                    onClick={() => {
+                      setSkillCopyTargetModalRow(cardContextMenu.row);
+                      setCardContextMenu(null);
+                    }}
+                  >
+                    复制到…
+                  </button>
+                  {skillBrowsePathIsDeletableFolder(
+                    cardContextMenu.row.sourcePath?.trim() ?? "",
+                  ) ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="card-context-menu__item card-context-menu__item--danger"
+                    onClick={() => {
+                      const row = cardContextMenu.row;
+                      const p = row.sourcePath?.trim();
+                      if (!p) return;
+                      const ok = window.confirm(
+                        `确定要删除技能文件夹「${row.title}」吗？将删除整个文件夹及其中的文件，且无法撤销。`,
+                      );
+                      setCardContextMenu(null);
+                      if (!ok) return;
+                      void (async () => {
+                        const r = await deleteSkillAtPath(p);
+                        if ("error" in r) {
+                          window.alert(`删除失败：${r.error}`);
+                          return;
+                        }
+                        setSelectedEntry((cur) =>
+                          cur?.path?.trim() === p ? null : cur,
+                        );
+                        setShellToast({ at: Date.now(), message: "已删除" });
+                        onRefreshInventory();
+                      })();
+                    }}
+                  >
+                    删除…
+                  </button>
+                  ) : null}
+                </>
               ) : null}
             </div>,
             document.body,
@@ -1153,10 +1213,24 @@ export default function SkillBrowseShell({
                     window.alert(`复制失败：${r.error}`);
                     return;
                   }
-                  void revealPathInFolder(r.path);
+                  setShellToast({ at: Date.now(), message: "复制成功" });
                 })();
               }}
             />,
+            document.body,
+          )
+        : null}
+
+      {shellToast
+        ? createPortal(
+            <div className="toast-stack" role="status" aria-live="polite">
+              <div className="toast toast--success">
+                <span className="toast__symbol" aria-hidden>
+                  ✓
+                </span>
+                <span className="toast__text">{shellToast.message}</span>
+              </div>
+            </div>,
             document.body,
           )
         : null}

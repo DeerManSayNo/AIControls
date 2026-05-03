@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import heroImage from "../../首页头图.png";
+import { openProjectPath } from "../api/openProject";
+import { revealPathInFolder } from "../api/reveal";
 import {
   getAgentGlobalInventoryCached,
   invalidateCachedAgentGlobalInventory,
@@ -12,6 +15,7 @@ import {
   type AgentScanResult,
 } from "../api/agents";
 import { bucketInventoryByAgent, inventoryAssetCount } from "../agentAssetGrouping";
+import { getOpenAppForProject, setOpenAppForProject } from "../projectOpenAppStorage";
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 
@@ -44,8 +48,12 @@ function summarizeInventory(inv: AgentInventory) {
   };
 }
 
+type ProjectMenuState = { path: string; left: number; top: number };
+
 export default function ShellPage({ subtitle }: Props) {
   const projectPaths = useProjectPaths();
+  const [projectMenu, setProjectMenu] = useState<ProjectMenuState | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
   const [detectedAgents, setDetectedAgents] = useState<AgentScanResult[]>([]);
   const [totals, setTotals] = useState({ skills: 0, mcp: 0, rules: 0 });
   const [projectStats, setProjectStats] = useState<
@@ -237,6 +245,56 @@ export default function ShellPage({ subtitle }: Props) {
     setHomeRefreshKey((k) => k + 1);
   };
 
+  useEffect(() => {
+    if (!projectMenu) return;
+    const close = () => setProjectMenu(null);
+    const onPointerDown = (e: PointerEvent) => {
+      if (projectMenuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [projectMenu]);
+
+  const closeProjectMenu = () => setProjectMenu(null);
+
+  const pickApplicationForProject = async (projectPath: string) => {
+    closeProjectMenu();
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: false,
+        title: "选择用于打开该项目的应用程序",
+      });
+      if (selected === null) return;
+      const appPath = Array.isArray(selected) ? selected[0] : selected;
+      if (typeof appPath === "string" && appPath.length > 0) {
+        setOpenAppForProject(projectPath, appPath);
+      }
+    } catch {
+      const manual = window.prompt(
+        "请输入应用程序的完整路径（例如 /Applications/Cursor.app）：",
+      );
+      const trimmed = manual?.trim();
+      if (trimmed) setOpenAppForProject(projectPath, trimmed);
+    }
+  };
+
+  const onOpenProjectCard = (projectPath: string) => {
+    const customApp = getOpenAppForProject(projectPath);
+    void openProjectPath(projectPath, {
+      applicationPath: customApp ?? null,
+      alertOnError: true,
+    });
+  };
+
   return (
     <div className="home-board">
       <header className="home-board-hero">
@@ -285,13 +343,45 @@ export default function ShellPage({ subtitle }: Props) {
         </div>
         <div className="home-board-project-grid">
           {recentProjects.map((project) => (
-            <article className="home-board-project-card" key={project.name}>
+            <article
+              className="home-board-project-card home-board-project-card--interactive"
+              key={project.path}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenProjectCard(project.path)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenProjectCard(project.path);
+                }
+              }}
+            >
               <div className="home-board-project-card__head">
                 <div>
                   <h3>{project.name}</h3>
-                  <p>{project.path}</p>
+                  <p title={project.path}>{project.path}</p>
                 </div>
-                <button type="button" className="home-board-project-card__menu" aria-label="更多操作">
+                <button
+                  type="button"
+                  className="home-board-project-card__menu"
+                  aria-label="更多操作"
+                  aria-haspopup="menu"
+                  aria-expanded={projectMenu?.path === project.path}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const menuWidth = 200;
+                    const gap = 4;
+                    const maxLeft = window.innerWidth - menuWidth - 8;
+                    /** 菜单左缘从 ⋮ 按钮右缘向右展开，贴右屏时向左夹紧 */
+                    const left = Math.max(8, Math.min(r.right + gap, maxLeft));
+                    setProjectMenu((prev) =>
+                      prev?.path === project.path
+                        ? null
+                        : { path: project.path, left, top: r.bottom + 4 },
+                    );
+                  }}
+                >
                   ⋮
                 </button>
               </div>
@@ -308,6 +398,45 @@ export default function ShellPage({ subtitle }: Props) {
           ))}
         </div>
       </section>
+      {projectMenu
+        ? createPortal(
+            <div
+              ref={projectMenuRef}
+              className="card-context-menu"
+              style={{
+                position: "fixed",
+                left: projectMenu.left,
+                top: projectMenu.top,
+                zIndex: 10_000,
+                minWidth: "11.5rem",
+              }}
+              role="menu"
+              aria-label="项目打开方式"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                onClick={() => pickApplicationForProject(projectMenu.path)}
+              >
+                选择默认打开应用…
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                onClick={() => {
+                  void revealPathInFolder(projectMenu.path, { alertOnError: true });
+                  closeProjectMenu();
+                }}
+              >
+                打开所在目录
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
