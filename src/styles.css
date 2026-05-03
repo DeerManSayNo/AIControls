@@ -678,7 +678,8 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 0.28rem;
-  margin-top: 0.06rem;
+  margin-top: auto;
+  align-self: flex-start;
 }
 
 .skill-card__tag {

@@ -179,6 +179,31 @@ function inventoryToRows(
   return rows;
 }
 
+function zeroScenarioCounts(): Record<ScenarioKey, number> {
+  return {
+    all: 0,
+    dev: 0,
+    office: 0,
+    creative: 0,
+    data: 0,
+    network: 0,
+    ops: 0,
+    collab: 0,
+  };
+}
+
+/** 在当前类型与搜索筛选下，各场景匹配条数（与点击场景芯片的判定一致） */
+function scenarioCountsFromRows(rows: BrowseRow[]): Record<ScenarioKey, number> {
+  const counts = zeroScenarioCounts();
+  counts.all = rows.length;
+  for (const row of rows) {
+    for (const key of SCENARIO_ORDER) {
+      if (rowMatchesScenarioChip(row, key)) counts[key]++;
+    }
+  }
+  return counts;
+}
+
 type Props = {
   title: string;
   /** 与侧栏 Agent 一致时展示该生态；支持扫描到的全部 id */
@@ -458,8 +483,13 @@ export default function SkillBrowseShell({
     };
   }, [dataSet, projectPaths]);
 
-  const sections = useMemo((): BrowseSection[] => {
-    const applyFilters = (rows: BrowseRow[]): BrowseRow[] => {
+  const { sections, scenarioCounts } = useMemo((): {
+    sections: BrowseSection[];
+    scenarioCounts: Record<ScenarioKey, number>;
+  } => {
+    const empty = zeroScenarioCounts();
+
+    const applyKindAndQuery = (rows: BrowseRow[]): BrowseRow[] => {
       let r = rows;
       if (filter !== "all") {
         r = r.filter((row) => row.kind === filter);
@@ -473,24 +503,26 @@ export default function SkillBrowseShell({
             (row.sourcePath?.toLowerCase().includes(q) ?? false),
         );
       }
-      if (scenario !== "all") {
-        r = r.filter((row) => rowMatchesScenarioChip(row, scenario));
-      }
       return r;
+    };
+
+    const applyScenarioFilter = (rows: BrowseRow[]): BrowseRow[] => {
+      if (scenario === "all") return rows;
+      return rows.filter((row) => rowMatchesScenarioChip(row, scenario));
     };
 
     if (dataSet === "project") {
       if (!projectRoot) {
-        return [];
+        return { sections: [], scenarioCounts: empty };
       }
       if (projectLoading && projectInv === undefined) {
-        return [];
+        return { sections: [], scenarioCounts: empty };
       }
       if (projectFailed) {
-        return [];
+        return { sections: [], scenarioCounts: empty };
       }
       if (!projectInv) {
-        return [];
+        return { sections: [], scenarioCounts: empty };
       }
       const buckets = bucketInventoryByAgent(projectInv);
       const out: BrowseSection[] = [];
@@ -503,16 +535,20 @@ export default function SkillBrowseShell({
           ...r,
           id: `proj:${agentId}:${r.id}`,
         }));
-        rows = applyFilters(rows);
+        rows = applyKindAndQuery(rows);
         out.push({ key: agentId, title: agentTitle, rows });
       }
       out.sort((a, b) => b.rows.length - a.rows.length);
-      return out.filter((s) => s.rows.length > 0);
+      const scenarioCounts = scenarioCountsFromRows(out.flatMap((s) => s.rows));
+      const filtered = out
+        .map((s) => ({ ...s, rows: applyScenarioFilter(s.rows) }))
+        .filter((s) => s.rows.length > 0);
+      return { sections: filtered, scenarioCounts };
     }
 
     if (dataSet === "aggregate") {
       if (aggregateLoading || aggregateSnapshot === null) {
-        return [];
+        return { sections: [], scenarioCounts: empty };
       }
       let rows: BrowseRow[] = [];
       for (const a of aggregateSnapshot.agents) {
@@ -542,19 +578,21 @@ export default function SkillBrowseShell({
           }),
         );
       }
-      rows = applyFilters(rows);
-      return [{ key: "aggregate", title: "", rows }];
+      rows = applyKindAndQuery(rows);
+      const scenarioCounts = scenarioCountsFromRows(rows);
+      rows = applyScenarioFilter(rows);
+      return { sections: [{ key: "aggregate", title: "", rows }], scenarioCounts };
     }
 
     if (ecosystem && dataSet === "skills") {
       if (liveLoading && liveInv === undefined) {
-        return [];
+        return { sections: [], scenarioCounts: empty };
       }
 
       const globalKey = `global:${ecosystem}`;
       let globalRows: BrowseRow[] = [];
       if (liveInv) {
-        globalRows = applyFilters(
+        globalRows = applyKindAndQuery(
           inventoryToRows(liveInv, ecosystem, title).map((r) => ({
             ...r,
             id: `g:${ecosystem}:${r.id}`,
@@ -577,18 +615,29 @@ export default function SkillBrowseShell({
           ...r,
           id: `a:${ecosystem}:${path}:${r.id}`,
         }));
-        rows = applyFilters(rows);
+        rows = applyKindAndQuery(rows);
         projectSections.push({ key: path, title: bn, rows });
       }
       projectSections.sort((a, b) => b.rows.length - a.rows.length);
-      const projectSectionsNonEmpty = projectSections.filter(
-        (s) => s.rows.length > 0,
+      const allForCounts = [globalSection, ...projectSections];
+      const scenarioCounts = scenarioCountsFromRows(
+        allForCounts.flatMap((s) => s.rows),
       );
+      const globalSectionFiltered: BrowseSection = {
+        ...globalSection,
+        rows: applyScenarioFilter(globalSection.rows),
+      };
+      const projectSectionsNonEmpty = projectSections
+        .map((s) => ({ ...s, rows: applyScenarioFilter(s.rows) }))
+        .filter((s) => s.rows.length > 0);
 
-      return [globalSection, ...projectSectionsNonEmpty];
+      return {
+        sections: [globalSectionFiltered, ...projectSectionsNonEmpty],
+        scenarioCounts,
+      };
     }
 
-    return [];
+    return { sections: [], scenarioCounts: empty };
   }, [
     dataSet,
     ecosystem,
@@ -787,7 +836,7 @@ export default function SkillBrowseShell({
               className={`scenario-chip${scenario === "all" ? " active" : ""}`}
               onClick={() => setScenario("all")}
             >
-              {SCENARIO_LABEL.all}
+              {SCENARIO_LABEL.all}（{scenarioCounts.all}）
             </button>
             {SCENARIO_ORDER.map((key) => (
               <button
@@ -799,7 +848,7 @@ export default function SkillBrowseShell({
                 className={`scenario-chip${scenario === key ? " active" : ""}`}
                 onClick={() => setScenario(key)}
               >
-                {SCENARIO_LABEL[key]}
+                {SCENARIO_LABEL[key]}（{scenarioCounts[key]}）
               </button>
             ))}
           </div>
