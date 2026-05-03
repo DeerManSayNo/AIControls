@@ -6,6 +6,7 @@ import {
   type AgentInventory,
   type AssetEntry,
 } from "../api/agents";
+import { SkillDetailPanel, type DetailEntry } from "../components/SkillDetailPanel";
 
 type AssetKind = "skill" | "mcp" | "rule";
 
@@ -89,10 +90,6 @@ const FILTER_LABEL: Record<FilterKey, string> = {
 
 const SEGMENT_KEYS: FilterKey[] = ["all", "skill", "mcp", "rule"];
 
-function kindLabel(k: AssetKind): string {
-  return FILTER_LABEL[k];
-}
-
 function inventoryToRows(
   inv: AgentInventory,
   ecosystem: string,
@@ -140,6 +137,7 @@ export default function SkillBrowseShell({
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [selectedEntry, setSelectedEntry] = useState<DetailEntry | null>(null);
   const [liveInv, setLiveInv] = useState<AgentInventory | null | undefined>(
     undefined,
   );
@@ -342,11 +340,11 @@ export default function SkillBrowseShell({
             {!projectRoot
               ? null
               : projectLoading
-                ? "正在扫描所选目录下的 SKILL.md、MCP（JSON）与规则文件…"
+                ? "正在扫描所选目录下各 Agent skills 目录、MCP（JSON）与规则文件…"
                 : projectFailed
                   ? "无法扫描该目录：请在 AIControls 桌面端运行，或检查路径与权限。"
                   : showProjectHint
-                    ? "以下为该目录树内的 Skills（SKILL.md）、MCP 与 Rules（.md / .mdc），已忽略 node_modules 等常见无关目录。"
+                    ? "以下为各 Agent 约定目录下的 Skills（如 .claude/skills、.cursor/skills 等下的 SKILL.md）、MCP（JSON）与 Rules，已忽略 node_modules 等无关目录；不扫描整仓库中任意位置的 SKILL.md。"
                     : null}
           </p>
         ) : null}
@@ -387,7 +385,34 @@ export default function SkillBrowseShell({
 
       <div className="skill-grid">
         {items.map((item) => (
-          <article key={item.id} className="skill-card">
+          <article
+            key={item.id}
+            className="skill-card"
+            onClick={() =>
+              setSelectedEntry({
+                id: item.id,
+                kind: item.kind,
+                title: item.title,
+                description: item.desc,
+                path: item.sourcePath,
+              })
+            }
+            style={{ cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setSelectedEntry({
+                  id: item.id,
+                  kind: item.kind,
+                  title: item.title,
+                  description: item.desc,
+                  path: item.sourcePath,
+                });
+              }
+            }}
+          >
             <div className="skill-card__title-row">
               <span className="skill-card__radio" aria-hidden />
               <span className="skill-card__title">{item.title}</span>
@@ -405,22 +430,15 @@ export default function SkillBrowseShell({
                 {item.sourcePath}
               </p>
             ) : null}
-            <div className="skill-card__meta">
-              <span className="skill-tag">{kindLabel(item.kind)}</span>
-              {item.tags.map((t) => (
-                <span key={t} className="skill-tag skill-tag--muted">
-                  {t}
-                </span>
-              ))}
-              <span
-                className={`skill-status${item.active ? " on" : " off"}`}
-              >
-                {item.active ? "启用" : "未启用"}
-              </span>
-            </div>
           </article>
         ))}
       </div>
+
+      {/* Skill 详情面板 */}
+      <SkillDetailPanel
+        entry={selectedEntry}
+        onClose={() => setSelectedEntry(null)}
+      />
 
       {items.length === 0 &&
       !(ecosystem && dataSet !== "project" && (liveLoading || liveFailed)) &&

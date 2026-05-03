@@ -25,7 +25,7 @@ export default function AgentNavLinks() {
     return (
       <p
         className="side-nav-sub-label"
-        title="安装 Cursor、Claude Code、Trae、Qoder 或生成对应用户目录后重新打开"
+        title="安装 Cursor、Claude Code、Trae、Qoder、Kiro 或生成对应用户目录后重新打开"
       >
         未发现已安装的 Agent
       </p>

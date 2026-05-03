@@ -49,7 +49,7 @@ function Layout({ children }: { children: ReactNode }) {
           首页
         </NavLink>
         <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
-          全部 Skills
+          全部
         </NavLink>
 
         <div className="side-nav-section-label">Agent</div>
@@ -96,6 +96,7 @@ const AGENT_TITLES: Record<string, string> = {
   claude: "Claude Code",
   trae: "Trae",
   qoder: "Qoder",
+  kiro: "Kiro",
 };
 
 function AgentRoute() {
@@ -131,7 +132,7 @@ export default function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<ShellPage title="首页" />} />
-        <Route path="/assets" element={<SkillBrowseShell title="全部 Skills" />} />
+        <Route path="/assets" element={<SkillBrowseShell title="全部" />} />
         <Route path="/settings" element={<ShellPage title="设置" />} />
         <Route path="/agent/:ecosystem" element={<AgentRoute />} />
         <Route path="/project" element={<ProjectRoute />} />

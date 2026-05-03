@@ -17,6 +17,11 @@ fn scan_project_directory(root: String) -> Result<scan::AgentInventory, String> 
     scan::scan_project_directory(std::path::Path::new(&root))
 }
 
+#[tauri::command]
+fn read_skill_document(path: String) -> Result<(String, String), String> {
+    scan::read_skill_document(std::path::Path::new(&path))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -24,6 +29,7 @@ pub fn run() {
             list_detected_agents,
             get_agent_global_inventory,
             scan_project_directory,
+            read_skill_document,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

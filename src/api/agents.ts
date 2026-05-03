@@ -17,7 +17,7 @@ export type AgentInventory = {
   rules: AssetEntry[];
 };
 
-export type AgentId = "cursor" | "claude" | "trae" | "qoder";
+export type AgentId = "cursor" | "claude" | "trae" | "qoder" | "kiro";
 
 export async function listDetectedAgents(): Promise<AgentScanResult[] | null> {
   try {
@@ -39,12 +39,36 @@ export async function getAgentGlobalInventory(
   }
 }
 
-/** Scan a chosen project folder for SKILL.md, MCP JSON, and rules (.md / .mdc). */
+/** Scan a project folder: Skills only under each agent’s `skills/` dir, plus MCP JSON and rules (conventional paths). */
 export async function scanProjectDirectory(
   root: string,
 ): Promise<AgentInventory | null> {
   try {
     return await invoke<AgentInventory>("scan_project_directory", { root });
+  } catch {
+    return null;
+  }
+}
+
+/** Result of reading a skill/rule document file. */
+export interface SkillDocument {
+  filename: string;
+  content: string;
+}
+
+/** Read the documentation file (SKILL.md, README.md, etc.) from a file or directory path.
+ *  If `path` is a directory, searches for known doc files (SKILL.md → skill.md → CLAUDE.md → README.md)
+ *  up to 4 levels deep. Returns `(filename, content)`.
+ */
+export async function getSkillDocument(
+  path: string,
+): Promise<SkillDocument | null> {
+  try {
+    const [filename, content] = await invoke<[string, string]>(
+      "read_skill_document",
+      { path },
+    );
+    return { filename, content };
   } catch {
     return null;
   }

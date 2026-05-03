@@ -1,5 +1,12 @@
 //! Scan installed agent apps and read global (non-project) skills, MCP, rules.
-//! Project scan walks a user-chosen directory recursively (agnostic of `.cursor` / `.claude` layout).
+//!
+//! **Rules** follow common 2026 layouts: project rules live under agent-specific dirs
+//! (e.g. `.cursor/rules/*.mdc`, `CLAUDE.md`, `.trae/rules`, `.qoder/rules`, `.kiro/rules`)
+//! plus legacy files (`.cursorrules`, `trae.config.jsonc`, JSON in `.qoder`/`.kiro`).
+//! Global user rules: `~/.cursor/rules`, `~/.claude/rules`, etc., plus legacy JSON(C) where applicable.
+//!
+//! **Project Skills**: only `SKILL.md` under each agent’s conventional `skills` directory (not every
+//! `SKILL.md` in the repo — excludes ad-hoc trees like `.agent/skills`).
 
 use serde::Serialize;
 use serde_json::Value;
@@ -83,6 +90,12 @@ pub fn detect_agents() -> Vec<AgentScanResult> {
             label: "Qoder".into(),
         });
     }
+    if detect_kiro(&home) {
+        out.push(AgentScanResult {
+            id: "kiro".into(),
+            label: "Kiro".into(),
+        });
+    }
 
     out
 }
@@ -105,6 +118,10 @@ fn detect_qoder(home: &Path) -> bool {
     app_bundle_exists("Qoder")
         || home.join(".qoder").is_dir()
         || home.join(".qoderwork").is_dir()
+}
+
+fn detect_kiro(home: &Path) -> bool {
+    app_bundle_exists("Kiro") || home.join(".kiro").is_dir()
 }
 
 fn should_skip_scan_dir(name: &str) -> bool {
@@ -146,30 +163,26 @@ fn walk_skill_files(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<Pa
     }
 }
 
-/// Project tree: skip heavy / external dirs; same SKILL.md discovery.
-fn walk_skill_files_project(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
-    if depth > max_depth || !dir.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for ent in entries.flatten() {
-        let p = ent.path();
+/// Project root: `SKILL.md` only under agent skill dirs (matches global inventory layout).
+fn collect_project_skill_paths(root: &Path, out: &mut Vec<PathBuf>) {
+    for rel in [
+        ".cursor/skills-cursor",
+        ".cursor/skills",
+        ".claude/skills",
+        ".trae/skills",
+        ".qoder/skills",
+        ".qoderwork/skills",
+        ".kiro/skills",
+    ] {
+        let p = root.join(rel);
         if p.is_dir() {
-            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if should_skip_scan_dir(name) {
-                    continue;
-                }
-            }
-            walk_skill_files_project(&p, depth + 1, max_depth, out);
-        } else if p.file_name().and_then(|n| n.to_str()) == Some("SKILL.md") {
-            out.push(p);
+            walk_skill_files(&p, 0, 12, out);
         }
     }
 }
 
-fn walk_rule_files(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+/// `.mdc` / `.md` rule snippets under an agent `rules` directory (not arbitrary repo Markdown).
+fn walk_rules_mdc_md(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
     if depth > max_depth || !dir.is_dir() {
         return;
     }
@@ -184,7 +197,7 @@ fn walk_rule_files(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<Pat
                     continue;
                 }
             }
-            walk_rule_files(&p, depth + 1, max_depth, out);
+            walk_rules_mdc_md(&p, depth + 1, max_depth, out);
         } else if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
             if name == "SKILL.md" {
                 continue;
@@ -196,31 +209,84 @@ fn walk_rule_files(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<Pat
     }
 }
 
-fn walk_rule_files_project(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
-    if depth > max_depth || !dir.is_dir() {
-        return;
+fn push_if_file(path: PathBuf, out: &mut Vec<PathBuf>) {
+    if path.is_file() {
+        out.push(path);
     }
+}
+
+/// Shallow `*.json` / `*.jsonc` in a directory (legacy agent rule bundles), excluding MCP duplicates.
+fn push_json_jsonc_in_dir_shallow(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for ent in entries.flatten() {
         let p = ent.path();
+        if !p.is_file() {
+            continue;
+        }
+        let ext = p.extension().and_then(|e| e.to_str());
+        if !matches!(ext, Some("json") | Some("jsonc")) {
+            continue;
+        }
+        if p.file_name().and_then(|n| n.to_str()) == Some("mcp.json") {
+            continue;
+        }
+        out.push(p);
+    }
+}
+
+/// Project root: only recognized agent rule locations (not every `*.md` in the tree).
+fn collect_project_rule_paths(root: &Path, out: &mut Vec<PathBuf>) {
+    // Cursor — directory MDC (and MD); legacy `.cursorrules`
+    let cursor_rules = root.join(".cursor/rules");
+    if cursor_rules.is_dir() {
+        walk_rules_mdc_md(&cursor_rules, 0, 8, out);
+    }
+    push_if_file(root.join(".cursorrules"), out);
+
+    // Claude Code — root CLAUDE.md + `.claude/rules`
+    push_if_file(root.join("CLAUDE.md"), out);
+    let claude_rules = root.join(".claude/rules");
+    if claude_rules.is_dir() {
+        walk_rules_mdc_md(&claude_rules, 0, 8, out);
+    }
+
+    // Trae — `.trae/rules` + root `trae.config.{jsonc,json}`
+    let trae_rules = root.join(".trae/rules");
+    if trae_rules.is_dir() {
+        walk_rules_mdc_md(&trae_rules, 0, 8, out);
+    }
+    push_if_file(root.join("trae.config.jsonc"), out);
+    push_if_file(root.join("trae.config.json"), out);
+
+    // Qoder — `.qoder/rules`, `.qoderwork/rules`, legacy JSON next to config
+    for rel in [".qoder/rules", ".qoderwork/rules"] {
+        let p = root.join(rel);
         if p.is_dir() {
-            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                if should_skip_scan_dir(name) {
-                    continue;
-                }
-            }
-            walk_rule_files_project(&p, depth + 1, max_depth, out);
-        } else if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            if name == "SKILL.md" {
-                continue;
-            }
-            if name.ends_with(".mdc") || name.ends_with(".md") {
-                out.push(p);
-            }
+            walk_rules_mdc_md(&p, 0, 8, out);
         }
     }
+    for q in [root.join(".qoder"), root.join(".qoderwork")] {
+        if q.is_dir() {
+            push_json_jsonc_in_dir_shallow(&q, out);
+        }
+    }
+
+    // Kiro — `.kiro/rules` + legacy `.kiro/*.{json,jsonc}` (not nested MCP dirs)
+    let kiro_rules = root.join(".kiro/rules");
+    if kiro_rules.is_dir() {
+        walk_rules_mdc_md(&kiro_rules, 0, 8, out);
+    }
+    let kiro_home = root.join(".kiro");
+    if kiro_home.is_dir() {
+        push_json_jsonc_in_dir_shallow(&kiro_home, out);
+    }
+}
+
+fn dedupe_paths(paths: &mut Vec<PathBuf>) {
+    paths.sort();
+    paths.dedup();
 }
 
 fn collect_skill_files(root: &Path, out: &mut Vec<PathBuf>) {
@@ -231,19 +297,7 @@ fn collect_skill_files(root: &Path, out: &mut Vec<PathBuf>) {
 
 fn collect_rule_files(root: &Path, out: &mut Vec<PathBuf>) {
     if root.is_dir() {
-        walk_rule_files(root, 0, 12, out);
-    }
-}
-
-fn collect_skill_files_project(root: &Path, out: &mut Vec<PathBuf>) {
-    if root.is_dir() {
-        walk_skill_files_project(root, 0, 16, out);
-    }
-}
-
-fn collect_rule_files_project(root: &Path, out: &mut Vec<PathBuf>) {
-    if root.is_dir() {
-        walk_rule_files_project(root, 0, 16, out);
+        walk_rules_mdc_md(root, 0, 12, out);
     }
 }
 
@@ -315,7 +369,8 @@ fn push_skills_from_roots(roots: &[PathBuf], list: &mut Vec<AssetEntry>) {
 
 fn push_skills_from_project_root(root: &Path, list: &mut Vec<AssetEntry>) {
     let mut paths = Vec::new();
-    collect_skill_files_project(root, &mut paths);
+    collect_project_skill_paths(root, &mut paths);
+    dedupe_paths(&mut paths);
     push_skills_from_paths(paths, list);
 }
 
@@ -353,7 +408,8 @@ fn push_rules_from_roots(roots: &[PathBuf], list: &mut Vec<AssetEntry>) {
 
 fn push_rules_from_project_root(root: &Path, list: &mut Vec<AssetEntry>) {
     let mut paths = Vec::new();
-    collect_rule_files_project(root, &mut paths);
+    collect_project_rule_paths(root, &mut paths);
+    dedupe_paths(&mut paths);
     push_rules_from_paths(paths, list);
 }
 
@@ -469,7 +525,8 @@ fn walk_json_for_mcp(dir: &Path, depth: usize, max_depth: usize, list: &mut Vec<
     }
 }
 
-/// Walks `root` recursively: `SKILL.md`, `.md`/`.mdc` rules (excluding `SKILL.md`), and MCP entries from JSON (`mcp.json`, `settings*.json` with MCP keys, etc.).
+/// Walks `root`: `SKILL.md` only under conventional agent `skills/` dirs (see `collect_project_skill_paths`),
+/// agent rules (see `collect_project_rule_paths`), and MCP from JSON (`mcp.json`, settings with MCP keys, etc.).
 pub fn scan_project_directory(root: &Path) -> Result<AgentInventory, String> {
     let root = root
         .canonicalize()
@@ -557,7 +614,19 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
                     parse_mcp_file(&asupport, &mut mcp);
                 }
             }
-            push_rules_from_roots(&[home.join(".trae/rules")], &mut rules);
+            let mut tr_paths = Vec::new();
+            let tr = home.join(".trae/rules");
+            if tr.is_dir() {
+                walk_rules_mdc_md(&tr, 0, 12, &mut tr_paths);
+            }
+            push_if_file(home.join(".trae/trae.config.jsonc"), &mut tr_paths);
+            push_if_file(home.join(".trae/trae.config.json"), &mut tr_paths);
+            let tr_home = home.join(".trae");
+            if tr_home.is_dir() {
+                push_json_jsonc_in_dir_shallow(&tr_home, &mut tr_paths);
+            }
+            dedupe_paths(&mut tr_paths);
+            push_rules_from_paths(tr_paths, &mut rules);
         }
         "qoder" => {
             push_skills_from_roots(
@@ -580,10 +649,33 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
                     }
                 }
             }
-            push_rules_from_roots(
-                &[home.join(".qoder/rules"), home.join(".qoderwork/rules")],
-                &mut rules,
-            );
+            let mut q_paths = Vec::new();
+            for r in [home.join(".qoder/rules"), home.join(".qoderwork/rules")] {
+                if r.is_dir() {
+                    walk_rules_mdc_md(&r, 0, 12, &mut q_paths);
+                }
+            }
+            for q in [home.join(".qoder"), home.join(".qoderwork")] {
+                if q.is_dir() {
+                    push_json_jsonc_in_dir_shallow(&q, &mut q_paths);
+                }
+            }
+            dedupe_paths(&mut q_paths);
+            push_rules_from_paths(q_paths, &mut rules);
+        }
+        "kiro" => {
+            push_skills_from_roots(&[home.join(".kiro/skills")], &mut skills);
+            let mut k_paths = Vec::new();
+            let kr = home.join(".kiro/rules");
+            if kr.is_dir() {
+                walk_rules_mdc_md(&kr, 0, 12, &mut k_paths);
+            }
+            let kiro_home = home.join(".kiro");
+            if kiro_home.is_dir() {
+                push_json_jsonc_in_dir_shallow(&kiro_home, &mut k_paths);
+            }
+            dedupe_paths(&mut k_paths);
+            push_rules_from_paths(k_paths, &mut rules);
         }
         _ => return Err(format!("unknown agent: {agent_id}")),
     }
@@ -608,5 +700,79 @@ fn dedupe_mcp(items: &mut Vec<AssetEntry>) {
             seen.insert(key, i);
             i += 1;
         }
+    }
+}
+
+fn walk_doc_files(dir: &Path, depth: usize, max_depth: usize, candidates: &[&str], out: &mut Vec<(PathBuf, String)>) {
+    if depth > max_depth || !dir.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for ent in entries.flatten() {
+        let p = ent.path();
+        if p.is_dir() {
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if should_skip_scan_dir(name) {
+                    continue;
+                }
+            }
+            walk_doc_files(&p, depth + 1, max_depth, candidates, out);
+        } else if p.is_file() {
+            let fname_os = p.file_name().map(|n| n.to_string_lossy().to_string());
+            if let Some(ref fname) = fname_os {
+                if candidates.contains(&fname.as_str()) {
+                    out.push((p, fname.clone()));
+                }
+            }
+        }
+    }
+}
+
+/// Read a documentation file (SKILL.md, README.md, etc.) from a given path.
+/// If `path` is a directory, searches for known doc files within it.
+/// If `path` is a file, reads it directly.
+/// Returns `(filename, content)`.
+pub fn read_skill_document(path: &Path) -> Result<(String, String), String> {
+    if path.is_dir() {
+        let candidates = ["SKILL.md", "skill.md", "CLAUDE.md", "claude.md", "README.md", "readme.md"];
+
+        // First pass: exact match at root of directory
+        for name in &candidates {
+            let file_path = path.join(name);
+            if file_path.is_file() {
+                let content = fs::read_to_string(&file_path)
+                    .map_err(|e| format!("读取文件失败: {e}"))?;
+                return Ok((name.to_string(), content));
+            }
+        }
+
+        // Second pass: recursive search (max_depth=4) — matches skills-manager behavior
+        let mut found = Vec::new();
+        walk_doc_files(path, 0, 4, &candidates, &mut found);
+        // Sort so SKILL.md is preferred over README.md if both exist
+        found.sort_by(|a, b| {
+            let a_idx = candidates.iter().position(|c| *c == a.1).unwrap_or(99);
+            let b_idx = candidates.iter().position(|c| *c == b.1).unwrap_or(99);
+            a_idx.cmp(&b_idx)
+        });
+        if let Some((file_path, fname)) = found.into_iter().next() {
+            let content = fs::read_to_string(&file_path)
+                .map_err(|e| format!("读取文件失败: {e}"))?;
+            return Ok((fname, content));
+        }
+
+        Err("未找到文档文件 (SKILL.md / README.md)".to_string())
+    } else if path.is_file() {
+        let fname = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("读取文件失败: {e}"))?;
+        Ok((fname, content))
+    } else {
+        Err("路径不存在".to_string())
     }
 }
