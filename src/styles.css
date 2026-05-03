@@ -147,65 +147,27 @@ a:hover {
 
 .side-nav-brand {
   display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.45rem 0.7rem 1.05rem;
-  margin-bottom: 0.4rem;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.12rem 0.62rem 0.42rem;
+  margin-bottom: 0.2rem;
   border-bottom: 1px solid var(--border);
 }
 
 .side-nav-brand__mark {
   flex-shrink: 0;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: linear-gradient(
-    135deg,
-    rgba(62, 224, 196, 0.95) 0%,
-    var(--accent-dim) 52%,
-    rgba(99, 102, 241, 0.75) 100%
-  );
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.14) inset,
-    0 4px 20px var(--accent-glow);
-  display: grid;
-  place-items: center;
-  position: relative;
-  overflow: hidden;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.side-nav-brand__mark-inner {
+.brand-logo-img {
   display: block;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  background: rgba(6, 7, 8, 0.88);
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.35),
-    10px 0 0 -4px rgba(255, 255, 255, 0.55),
-    0 10px 0 -4px rgba(255, 255, 255, 0.35);
-}
-
-@media (prefers-color-scheme: light) {
-  .side-nav-brand__mark {
-    background: linear-gradient(
-      135deg,
-      #14b8a6 0%,
-      #0d9488 45%,
-      #4f46e5 100%
-    );
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.35) inset,
-      0 6px 20px rgba(13, 148, 136, 0.25);
-  }
-
-  .side-nav-brand__mark-inner {
-    background: #fff;
-    box-shadow:
-      0 0 0 2px rgba(17, 20, 24, 0.12),
-      10px 0 0 -4px rgba(17, 20, 24, 0.2),
-      0 10px 0 -4px rgba(17, 20, 24, 0.12);
-  }
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .side-nav-brand__text {
@@ -217,7 +179,7 @@ a:hover {
 
 .side-nav-brand__name {
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 1.1rem;
   letter-spacing: -0.04em;
   line-height: 1.15;
   color: var(--text);
@@ -1063,6 +1025,23 @@ main {
   background: transparent;
   flex-shrink: 0;
   box-shadow: inset 0 0 0 1px var(--bg);
+}
+
+.skill-card__radio--ai {
+  border-color: rgba(124, 58, 237, 0.85);
+  background: rgba(124, 58, 237, 0.3);
+}
+
+.skill-card__radio--source {
+  border-color: var(--border-strong);
+  background: transparent;
+}
+
+@media (prefers-color-scheme: light) {
+  .skill-card__radio--ai {
+    border-color: rgba(109, 40, 217, 0.9);
+    background: rgba(109, 40, 217, 0.2);
+  }
 }
 
 .skill-card__title {

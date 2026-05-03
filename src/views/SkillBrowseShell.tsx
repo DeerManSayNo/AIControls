@@ -6,9 +6,11 @@ import {
   useState,
   type MouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
   deepseekClassifyInventory,
+  deepseekSummarizeInventory,
   getDeepseekSettings,
 } from "../api/deepseek";
 import {
@@ -43,6 +45,7 @@ type BrowseRow = {
   id: string;
   title: string;
   desc: string;
+  descSource: "ai" | "source";
   kind: AssetKind;
   ecosystem: string;
   tags: string[];
@@ -113,6 +116,15 @@ function scenarioMapFromInventory(inv: AgentInventory): Map<string, string> {
   return m;
 }
 
+function briefMapFromInventory(inv: AgentInventory): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const e of [...inv.skills, ...inv.mcp, ...inv.rules]) {
+    const brief = e.brief_zh?.trim();
+    if (brief) m.set(e.id, brief);
+  }
+  return m;
+}
+
 function patchAgentInventory(
   inv: AgentInventory,
   map: Map<string, string>,
@@ -145,6 +157,38 @@ function patchAggregateSnapshot(
   };
 }
 
+function patchAgentInventoryBrief(
+  inv: AgentInventory,
+  map: Map<string, string>,
+): AgentInventory {
+  const patch = (e: AssetEntry): AssetEntry => ({
+    ...e,
+    brief_zh: map.get(e.id) ?? e.brief_zh ?? null,
+  });
+  return {
+    skills: inv.skills.map(patch),
+    mcp: inv.mcp.map(patch),
+    rules: inv.rules.map(patch),
+  };
+}
+
+function patchAggregateSnapshotBrief(
+  snap: AggregateSnapshot,
+  map: Map<string, string>,
+): AggregateSnapshot {
+  return {
+    agents: snap.agents.map((a) => ({
+      ...a,
+      inv: a.inv ? patchAgentInventoryBrief(a.inv, map) : null,
+    })),
+    projects: snap.projects.map((p) => ({
+      ...p,
+      inv: p.inv ? patchAgentInventoryBrief(p.inv, map) : null,
+    })),
+    anyInventoryFailed: snap.anyInventoryFailed,
+  };
+}
+
 type FilterKey = "all" | AssetKind;
 
 const FILTER_LABEL: Record<FilterKey, string> = {
@@ -163,10 +207,12 @@ function inventoryToRows(
 ): BrowseRow[] {
   const rows: BrowseRow[] = [];
   const push = (e: AssetEntry, kind: AssetKind) => {
+    const brief = e.brief_zh?.trim();
     rows.push({
       id: e.id,
       title: e.title,
-      desc: e.description,
+      desc: brief || e.description,
+      descSource: brief ? "ai" : "source",
       kind,
       ecosystem,
       tags: [FILTER_LABEL[kind], agentTitle],
@@ -257,6 +303,7 @@ export default function SkillBrowseShell({
     () => dataSet === "aggregate",
   );
   const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
+  const [aiBriefBusy, setAiBriefBusy] = useState(false);
   const [cardContextMenu, setCardContextMenu] = useState<{
     x: number;
     y: number;
@@ -357,6 +404,23 @@ export default function SkillBrowseShell({
         }),
       );
       if (!cancelled) setAiScenarioBusy(false);
+
+      const baseForSummary = classified ?? merged;
+      setAiBriefBusy(true);
+      const summarized = await deepseekSummarizeInventory(baseForSummary);
+      if (cancelled || !summarized) {
+        if (!cancelled) setAiBriefBusy(false);
+        return;
+      }
+      const briefMap = briefMapFromInventory(summarized);
+      setLiveInv((prev) => (prev ? patchAgentInventoryBrief(prev, briefMap) : prev));
+      setAgentProjectScans((prev) =>
+        prev.map((item) => ({
+          ...item,
+          inv: item.inv ? patchAgentInventoryBrief(item.inv, briefMap) : null,
+        })),
+      );
+      if (!cancelled) setAiBriefBusy(false);
     })();
 
     return () => {
@@ -396,6 +460,11 @@ export default function SkillBrowseShell({
       const next = await deepseekClassifyInventory(data);
       if (!cancelled && next) setProjectInv(next);
       if (!cancelled) setAiScenarioBusy(false);
+      const baseForSummary = next ?? data;
+      setAiBriefBusy(true);
+      const summarized = await deepseekSummarizeInventory(baseForSummary);
+      if (!cancelled && summarized) setProjectInv(summarized);
+      if (!cancelled) setAiBriefBusy(false);
     });
     return () => {
       cancelled = true;
@@ -478,6 +547,17 @@ export default function SkillBrowseShell({
         );
       }
       if (!cancelled) setAiScenarioBusy(false);
+
+      const baseForSummary = classified ?? merged;
+      setAiBriefBusy(true);
+      const summarized = await deepseekSummarizeInventory(baseForSummary);
+      if (!cancelled && summarized) {
+        const briefMap = briefMapFromInventory(summarized);
+        setAggregateSnapshot((prev) =>
+          prev ? patchAggregateSnapshotBrief(prev, briefMap) : prev,
+        );
+      }
+      if (!cancelled) setAiBriefBusy(false);
     })();
 
     return () => {
@@ -735,7 +815,11 @@ export default function SkillBrowseShell({
         }}
       >
         <div className="skill-card__title-row">
-          <span className="skill-card__radio" aria-hidden />
+          <span
+            className={`skill-card__radio skill-card__radio--${item.descSource}`}
+            aria-hidden
+            title={item.descSource === "ai" ? "AI 缩略介绍" : "原始描述"}
+          />
           <span className="skill-card__title">{item.title}</span>
           <span
             className={`skill-card__kind skill-card__kind--${item.kind}`}
@@ -854,13 +938,15 @@ export default function SkillBrowseShell({
               </button>
             ))}
           </div>
-          {aiScenarioBusy ? (
+          {aiScenarioBusy || aiBriefBusy ? (
             <p
               className="muted toolbar__deepseek-status"
               role="status"
               aria-live="polite"
             >
-              DeepSeek 正在为尚未写入本地缓存的条目补全场景分类，请稍候…
+              {aiScenarioBusy
+                ? "DeepSeek 正在为尚未写入本地缓存的条目补全场景分类，请稍候…"
+                : "DeepSeek 正在逐条生成中文缩略介绍（100字以内），请稍候…"}
             </p>
           ) : null}
         </div>
@@ -912,32 +998,35 @@ export default function SkillBrowseShell({
         );
       })}
 
-      {cardContextMenu ? (
-        <div
-          ref={cardContextMenuRef}
-          className="card-context-menu"
-          style={{
-            position: "fixed",
-            left: cardContextMenu.x,
-            top: cardContextMenu.y,
-            zIndex: 10_000,
-          }}
-          role="menu"
-          aria-label="卡片操作"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="card-context-menu__item"
-            onClick={() => {
-              void revealPathInFolder(cardContextMenu.path);
-              setCardContextMenu(null);
-            }}
-          >
-            在所在目录中显示
-          </button>
-        </div>
-      ) : null}
+      {cardContextMenu
+        ? createPortal(
+            <div
+              ref={cardContextMenuRef}
+              className="card-context-menu"
+              style={{
+                position: "fixed",
+                left: cardContextMenu.x,
+                top: cardContextMenu.y,
+                zIndex: 10_000,
+              }}
+              role="menu"
+              aria-label="卡片操作"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                onClick={() => {
+                  void revealPathInFolder(cardContextMenu.path);
+                  setCardContextMenu(null);
+                }}
+              >
+                在所在目录中显示
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {/* Skill 详情面板 */}
       <SkillDetailPanel

@@ -46,3 +46,16 @@ export async function deepseekClassifyInventory(
     return null;
   }
 }
+
+/** 对已加载库存中尚未写入本地缓存的条目调用 DeepSeek 生成中文缩略介绍。 */
+export async function deepseekSummarizeInventory(
+  inventory: AgentInventory,
+): Promise<AgentInventory | null> {
+  try {
+    return await invoke<AgentInventory>("deepseek_summarize_inventory", {
+      inventory,
+    });
+  } catch {
+    return null;
+  }
+}

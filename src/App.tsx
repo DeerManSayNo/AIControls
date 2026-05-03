@@ -9,6 +9,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import AddProjectNavButton from "./components/AddProjectNavButton";
+import BrandLogo from "./components/BrandLogo";
 import AgentNavLinks from "./components/AgentNavLinks";
 import {
   NavIconFolder,
@@ -53,7 +54,7 @@ function Layout({ children }: { children: ReactNode }) {
       <aside className="side-nav" aria-label="主导航">
         <div className="side-nav-brand">
           <div className="side-nav-brand__mark" aria-hidden>
-            <span className="side-nav-brand__mark-inner" />
+            <BrandLogo />
           </div>
           <div className="side-nav-brand__text">
             <span className="side-nav-brand__name">AIControls</span>

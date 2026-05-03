@@ -31,6 +31,9 @@ pub struct AssetEntry {
     /// AI 分类：`dev` / `office` / `creative` / `data` / `network` / `ops` / `collab`
     #[serde(default)]
     pub scenario: Option<String>,
+    /// AI 生成的中文缩略介绍（<=100字）
+    #[serde(default)]
+    pub brief_zh: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +52,19 @@ pub fn attach_scenarios(inv: &mut AgentInventory, map: &HashMap<String, String>)
     {
         if let Some(s) = map.get(&e.id) {
             e.scenario = Some(s.clone());
+        }
+    }
+}
+
+pub fn attach_briefs(inv: &mut AgentInventory, map: &HashMap<String, String>) {
+    for e in inv
+        .skills
+        .iter_mut()
+        .chain(inv.mcp.iter_mut())
+        .chain(inv.rules.iter_mut())
+    {
+        if let Some(s) = map.get(&e.id) {
+            e.brief_zh = Some(s.clone());
         }
     }
 }
@@ -534,6 +550,7 @@ fn push_skills_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             path: p.to_string_lossy().into_owned(),
             active: true,
             scenario: None,
+            brief_zh: None,
         });
     }
 }
@@ -574,6 +591,7 @@ fn push_rules_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             path: p.to_string_lossy().into_owned(),
             active: true,
             scenario: None,
+            brief_zh: None,
         });
     }
 }
@@ -637,6 +655,7 @@ fn parse_mcp_object_at(
                 .unwrap_or_else(|| format!("mcp:{name}")),
             active: true,
             scenario: None,
+            brief_zh: None,
         });
     }
 }

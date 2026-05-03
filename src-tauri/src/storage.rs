@@ -40,6 +40,10 @@ fn scenario_map_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_local_dir(app)?.join("asset_scenarios.json"))
 }
 
+fn brief_map_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("asset_briefs_zh.json"))
+}
+
 pub fn get_deepseek_settings_public(app: &AppHandle) -> Result<DeepseekSettingsPublic, String> {
     let configured = load_deepseek_api_key(app)?.map(|s| !s.is_empty()).unwrap_or(false);
     Ok(DeepseekSettingsPublic {
@@ -97,11 +101,42 @@ pub fn merge_scenario_map(app: &AppHandle, delta: &HashMap<String, String>) -> R
     save_scenario_map(app, &m)
 }
 
+pub fn load_brief_map(app: &AppHandle) -> Result<HashMap<String, String>, String> {
+    let path = brief_map_path(app)?;
+    if !path.is_file() {
+        return Ok(HashMap::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let v: HashMap<String, String> =
+        serde_json::from_str(&text).map_err(|e| format!("读取缩略介绍缓存失败：{e}"))?;
+    Ok(v)
+}
+
+pub fn merge_brief_map(app: &AppHandle, delta: &HashMap<String, String>) -> Result<(), String> {
+    if delta.is_empty() {
+        return Ok(());
+    }
+    let mut m = load_brief_map(app).unwrap_or_default();
+    for (k, v) in delta {
+        m.insert(k.clone(), v.clone());
+    }
+    save_brief_map(app, &m)
+}
+
 fn save_scenario_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(), String> {
     let path = scenario_map_path(app)?;
     ensure_parent(&path)?;
     let json =
         serde_json::to_string_pretty(map).map_err(|e| format!("序列化分类缓存失败：{e}"))?;
     fs::write(path, json).map_err(|e| format!("写入分类缓存失败：{e}"))?;
+    Ok(())
+}
+
+fn save_brief_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(), String> {
+    let path = brief_map_path(app)?;
+    ensure_parent(&path)?;
+    let json =
+        serde_json::to_string_pretty(map).map_err(|e| format!("序列化缩略介绍缓存失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入缩略介绍缓存失败：{e}"))?;
     Ok(())
 }

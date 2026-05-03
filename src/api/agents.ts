@@ -11,6 +11,8 @@ export type AssetEntry = {
   active: boolean;
   /** DeepSeek 持久化分类：`dev` | `office` | … */
   scenario?: string | null;
+  /** DeepSeek 中文缩略介绍（<=100字） */
+  brief_zh?: string | null;
 };
 
 export type AgentInventory = {

@@ -18,16 +18,20 @@ fn get_agent_global_inventory(
     agent_id: String,
 ) -> Result<AgentInventory, String> {
     let mut inv = scan::global_inventory(&agent_id)?;
-    let map = storage::load_scenario_map(&app).unwrap_or_default();
-    scan::attach_scenarios(&mut inv, &map);
+    let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
+    scan::attach_scenarios(&mut inv, &scenario_map);
+    let brief_map = storage::load_brief_map(&app).unwrap_or_default();
+    scan::attach_briefs(&mut inv, &brief_map);
     Ok(inv)
 }
 
 #[tauri::command]
 fn scan_project_directory(app: AppHandle, root: String) -> Result<AgentInventory, String> {
     let mut inv = scan::scan_project_directory(std::path::Path::new(&root))?;
-    let map = storage::load_scenario_map(&app).unwrap_or_default();
-    scan::attach_scenarios(&mut inv, &map);
+    let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
+    scan::attach_scenarios(&mut inv, &scenario_map);
+    let brief_map = storage::load_brief_map(&app).unwrap_or_default();
+    scan::attach_briefs(&mut inv, &brief_map);
     Ok(inv)
 }
 
@@ -59,6 +63,14 @@ async fn deepseek_classify_inventory(
     inventory: AgentInventory,
 ) -> Result<AgentInventory, String> {
     deepseek::classify_inventory_missing(&app, inventory).await
+}
+
+#[tauri::command]
+async fn deepseek_summarize_inventory(
+    app: AppHandle,
+    inventory: AgentInventory,
+) -> Result<AgentInventory, String> {
+    deepseek::summarize_inventory_missing(&app, inventory).await
 }
 
 /// 在系统文件管理器中打开路径：文件则打开其所在文件夹并选中；文件夹则打开该文件夹。
@@ -130,6 +142,7 @@ pub fn run() {
             save_deepseek_settings,
             test_deepseek_connection,
             deepseek_classify_inventory,
+            deepseek_summarize_inventory,
             reveal_path_in_folder,
         ])
         .run(tauri::generate_context!())

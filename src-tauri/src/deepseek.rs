@@ -1,6 +1,6 @@
 //! DeepSeek Chat API — connectivity test + batched scenario classification.
 
-use crate::scan::{attach_scenarios, AgentInventory, AssetEntry};
+use crate::scan::{attach_briefs, attach_scenarios, AgentInventory, AssetEntry};
 use crate::storage;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -139,6 +139,18 @@ collab — 团队沟通、项目管理、会议与任务协同等
         .to_string()
 }
 
+fn summarize_system_prompt() -> String {
+    r#"你是 AIControls 的资产缩略介绍助手。输入是多条 Skill / MCP / Rule 的条目信息。
+请为每条生成中文缩略介绍，并严格遵守：
+1) 每条最多 100 个中文字符；
+2) 只基于给定 title/description/kind，禁止编造未给出的事实；
+3) 风格中性、信息密度高，1-2 句；
+4) 不使用 Markdown，不加序号，不输出额外解释。
+
+只输出一个 JSON 对象：键为条目 id（字符串），值为缩略介绍（字符串）。"#
+        .to_string()
+}
+
 async fn classify_batch(
     api_key: &str,
     batch: &[AssetEntry],
@@ -202,6 +214,84 @@ async fn classify_batch_fill_missing(
     Ok(delta)
 }
 
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        s.chars().take(max).collect::<String>()
+    }
+}
+
+fn normalize_brief_text(raw: &str) -> Option<String> {
+    let compact = raw
+        .lines()
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact = compact.trim();
+    if compact.is_empty() {
+        return None;
+    }
+    let cut = truncate_chars(compact, 100);
+    Some(cut)
+}
+
+async fn summarize_batch(
+    api_key: &str,
+    batch: &[AssetEntry],
+) -> Result<HashMap<String, String>, String> {
+    let mut lines = Vec::new();
+    for e in batch {
+        lines.push(format!(
+            "- id={} kind={} title={} description={}",
+            serde_json::to_string(&e.id).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.kind).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.title).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.description).map_err(|e| e.to_string())?,
+        ));
+    }
+    let user = format!(
+        "请为下列条目生成中文缩略介绍（输出 JSON 对象 id→brief）：\n{}",
+        lines.join("\n")
+    );
+    let raw = chat_completion(api_key, &summarize_system_prompt(), &user, true, 1400).await?;
+    let v = extract_json_object(&raw)?;
+    let obj = v
+        .as_object()
+        .ok_or_else(|| "模型输出不是 JSON 对象".to_string())?;
+
+    let mut out = HashMap::new();
+    for (id, val) in obj {
+        let Some(txt) = val.as_str() else {
+            continue;
+        };
+        if let Some(clean) = normalize_brief_text(txt) {
+            out.insert(id.clone(), clean);
+        }
+    }
+    Ok(out)
+}
+
+async fn summarize_batch_fill_missing(
+    api_key: &str,
+    chunk: &[AssetEntry],
+) -> Result<HashMap<String, String>, String> {
+    let mut delta = summarize_batch(api_key, chunk).await?;
+    for e in chunk {
+        if delta.contains_key(&e.id) {
+            continue;
+        }
+        match summarize_batch(api_key, &[e.clone()]).await {
+            Ok(m) => delta.extend(m),
+            Err(_) => {
+                /* 单次失败则跳过该 id，下次扫描仍会尝试 */
+            }
+        }
+    }
+    Ok(delta)
+}
+
 /// 仅为尚未写入本地缓存 map 的条目调用 DeepSeek；结果持久化并写回 `inventory.scenario`。
 pub async fn classify_inventory_missing(
     app: &AppHandle,
@@ -237,6 +327,47 @@ pub async fn classify_inventory_missing(
             storage::merge_scenario_map(app, &delta)?;
             map.extend(delta);
             attach_scenarios(&mut inventory, &map);
+        }
+    }
+
+    Ok(inventory)
+}
+
+/// 仅为尚未写入本地 brief map 的条目调用 DeepSeek；结果持久化并写回 `inventory.brief_zh`。
+pub async fn summarize_inventory_missing(
+    app: &AppHandle,
+    mut inventory: AgentInventory,
+) -> Result<AgentInventory, String> {
+    let api_key = match storage::load_deepseek_api_key(app)? {
+        Some(k) if !k.is_empty() => k,
+        _ => return Ok(inventory),
+    };
+
+    let mut map = storage::load_brief_map(app).unwrap_or_default();
+    attach_briefs(&mut inventory, &map);
+
+    let mut seen = HashSet::<String>::new();
+    let missing: Vec<AssetEntry> = inventory
+        .skills
+        .iter()
+        .chain(inventory.mcp.iter())
+        .chain(inventory.rules.iter())
+        .filter(|e| !map.contains_key(&e.id))
+        .filter(|e| seen.insert(e.id.clone()))
+        .cloned()
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(inventory);
+    }
+
+    const BATCH: usize = 8;
+    for chunk in missing.chunks(BATCH) {
+        let delta = summarize_batch_fill_missing(&api_key, chunk).await?;
+        if !delta.is_empty() {
+            storage::merge_brief_map(app, &delta)?;
+            map.extend(delta);
+            attach_briefs(&mut inventory, &map);
         }
     }
 

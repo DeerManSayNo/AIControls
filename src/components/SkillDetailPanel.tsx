@@ -248,7 +248,7 @@ function SkillDetailPanelContent({
 
   const sheetDescriptionText =
     docState.status === "loaded"
-      ? docState.fmDescription?.trim() || entry.description?.trim()
+      ? entry.description?.trim() || docState.fmDescription?.trim()
       : entry.description?.trim();
 
   return (
