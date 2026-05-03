@@ -34,6 +34,9 @@ pub struct AssetEntry {
     /// AI 生成的中文缩略介绍（<=100字）
     #[serde(default)]
     pub brief_zh: Option<String>,
+    /// Skill 包目录内除主 `SKILL.md` 外的其他文件名（仅当 `path` 为技能文件夹时填充）
+    #[serde(default)]
+    pub skill_extra_files: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -528,29 +531,185 @@ fn truncate_chars(s: &str, max: usize) -> String {
     }
 }
 
+/// 与 SKILL 内 `name:` 对比用：小写、空白与下划线归一为 `-`、压连续 `-`。
+fn skill_name_slug(s: &str) -> String {
+    let t = s.trim().to_lowercase();
+    let mut out = String::with_capacity(t.len());
+    let mut prev_dash = true;
+    for ch in t.chars() {
+        let c = if ch.is_whitespace() || ch == '_' {
+            '-'
+        } else {
+            ch
+        };
+        if c == '-' {
+            if !prev_dash {
+                out.push('-');
+                prev_dash = true;
+            }
+        } else {
+            out.push(c);
+            prev_dash = false;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+pub(crate) fn skills_container_dir(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "skills" | "skills-cursor" | "skill"
+    )
+}
+
+/// `SKILL.md` 所在目录名与正文声明的 `name:` 一致（或正文中未声明 `name`）时视为技能包根目录。
+pub(crate) fn folder_matches_skill_name(folder: &str, declared_name: Option<&str>) -> bool {
+    match declared_name {
+        None => true,
+        Some(d) => skill_name_slug(folder) == skill_name_slug(d),
+    }
+}
+
+fn extract_yaml_scalar_key(text: &str, key: &str, stop_on_yaml_map_key: bool) -> Option<String> {
+    let prefix = format!("{key}:");
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim_start();
+        let Some(after_key) = trimmed.strip_prefix(&prefix) else {
+            i += 1;
+            continue;
+        };
+        let rest = after_key.trim_start();
+        if yaml_block_scalar_starts(rest) {
+            i += 1;
+            return collect_description_block_scalar(&lines, i, stop_on_yaml_map_key);
+        }
+        let val = rest.trim();
+        if !val.is_empty() {
+            return Some(unquote_yaml_scalar(val));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn header_lines_before_h1(content: &str, max_lines: usize) -> Vec<&str> {
+    let mut header_lines = Vec::new();
+    for line in content.lines().take(max_lines) {
+        if is_atx_h1_line(line) {
+            break;
+        }
+        header_lines.push(line);
+    }
+    header_lines
+}
+
+/// YAML frontmatter 或首个 `#` 标题前的伪头中的 `name:`。
+pub(crate) fn extract_skill_declared_name(markdown: &str) -> Option<String> {
+    let t = markdown.trim_start();
+    let (fm_opt, body_after_fm): (Option<&str>, &str) = if t.starts_with("---") {
+        if let Some(rest) = t.strip_prefix("---") {
+            if let Some(end) = rest.find("\n---") {
+                (Some(rest[..end].trim()), rest[end + 4..].trim())
+            } else {
+                (None, t)
+            }
+        } else {
+            (None, t)
+        }
+    } else {
+        (None, t)
+    };
+
+    if let Some(fm) = fm_opt {
+        if let Some(n) = extract_yaml_scalar_key(fm, "name", true) {
+            let n = n.trim();
+            if !n.is_empty() {
+                return Some(n.to_string());
+            }
+        }
+    }
+
+    let header = header_lines_before_h1(body_after_fm, 80).join("\n");
+    extract_yaml_scalar_key(&header, "name", false)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 技能目录内除扫描到的主 `SKILL.md` 外的普通文件（不含子目录），排序后返回。
+fn collect_skill_sibling_files(dir: &Path, primary_md: &Path) -> Option<Vec<String>> {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return None;
+    };
+    let mut names: Vec<String> = rd
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if !path.is_file() || path == primary_md {
+                return None;
+            }
+            let fname = e.file_name().to_string_lossy().into_owned();
+            if fname == ".DS_Store" {
+                return None;
+            }
+            Some(fname)
+        })
+        .collect();
+    names.sort();
+    if names.is_empty() {
+        None
+    } else {
+        Some(names)
+    }
+}
+
 fn push_skills_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
     paths.sort();
     for p in paths {
-        let title = p
-            .parent()
-            .and_then(|x| x.file_name())
+        let Some(dir) = p.parent() else {
+            continue;
+        };
+        let title = dir
+            .file_name()
             .map(|x| x.to_string_lossy().into_owned())
             .unwrap_or_else(|| "skill".into());
-        let desc = read_preview(&p, 160);
+
+        let content = fs::read_to_string(&p).unwrap_or_default();
+        let desc = preview_from_markdown(&content, 160);
         let desc = if desc.is_empty() {
             p.to_string_lossy().into_owned()
         } else {
             desc
         };
+
+        let declared = extract_skill_declared_name(&content);
+        let use_skill_dir = dir.is_dir()
+            && !skills_container_dir(&title)
+            && folder_matches_skill_name(&title, declared.as_deref());
+
+        let path_str = if use_skill_dir {
+            dir.to_string_lossy().into_owned()
+        } else {
+            p.to_string_lossy().into_owned()
+        };
+
+        let skill_extra_files = if use_skill_dir {
+            collect_skill_sibling_files(dir, &p)
+        } else {
+            None
+        };
+
         list.push(AssetEntry {
             id: stable_id("skill", &p),
             kind: "skill".into(),
             title,
             description: desc,
-            path: p.to_string_lossy().into_owned(),
+            path: path_str,
             active: true,
             scenario: None,
             brief_zh: None,
+            skill_extra_files,
         });
     }
 }
@@ -592,6 +751,7 @@ fn push_rules_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             active: true,
             scenario: None,
             brief_zh: None,
+            skill_extra_files: None,
         });
     }
 }
@@ -656,6 +816,7 @@ fn parse_mcp_object_at(
             active: true,
             scenario: None,
             brief_zh: None,
+            skill_extra_files: None,
         });
     }
 }

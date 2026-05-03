@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -15,14 +16,19 @@ import {
 } from "../api/deepseek";
 import {
   getAgentGlobalInventoryCached,
+  invalidateCachedAgentGlobalInventory,
+  invalidateCachedProjectInventory,
   scanProjectDirectoryCached,
 } from "../api/agentInventoryCache";
 import {
+  copySkillPackage,
   listDetectedAgents,
   type AgentInventory,
   type AssetEntry,
 } from "../api/agents";
 import { useProjectPaths } from "../projectPathsStorage";
+import { PageRefreshButton } from "../components/PageRefreshButton";
+import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
 import { SkillDetailPanel, type DetailEntry } from "../components/SkillDetailPanel";
 import {
   rowMatchesScenarioChip,
@@ -38,6 +44,7 @@ import {
   inventoryAssetCount,
 } from "../agentAssetGrouping";
 import { revealPathInFolder } from "../api/reveal";
+import { buildCopySkillMenuSections } from "../skillCopyTargets";
 
 type AssetKind = "skill" | "mcp" | "rule";
 
@@ -52,6 +59,8 @@ type BrowseRow = {
   active: boolean;
   /** 本机路径或占位 id */
   sourcePath?: string;
+  /** 技能包内除主 SKILL.md 外的文件（与 AssetEntry.skill_extra_files 一致） */
+  skillExtraFiles?: string[];
   /** DeepSeek 分类 slug；未命中时用关键词兜底 */
   scenario?: string | null;
 };
@@ -218,6 +227,7 @@ function inventoryToRows(
       tags: [FILTER_LABEL[kind], agentTitle],
       active: e.active,
       sourcePath: e.path,
+      skillExtraFiles: e.skill_extra_files ?? undefined,
       scenario: e.scenario ?? null,
     });
   };
@@ -250,6 +260,14 @@ function scenarioCountsFromRows(rows: BrowseRow[]): Record<ScenarioKey, number> 
     }
   }
   return counts;
+}
+
+function stringSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) {
+    if (!b.has(x)) return false;
+  }
+  return true;
 }
 
 type Props = {
@@ -307,9 +325,36 @@ export default function SkillBrowseShell({
   const [cardContextMenu, setCardContextMenu] = useState<{
     x: number;
     y: number;
-    path: string;
+    row: BrowseRow;
   } | null>(null);
   const cardContextMenuRef = useRef<HTMLDivElement>(null);
+  const [skillCopyTargetModalRow, setSkillCopyTargetModalRow] =
+    useState<BrowseRow | null>(null);
+  /** 递增以使数据 useEffect 重新拉取（与手动刷新配合） */
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const onRefreshInventory = useCallback(() => {
+    if (dataSet === "aggregate") {
+      invalidateCachedAgentGlobalInventory();
+      invalidateCachedProjectInventory();
+    } else if (dataSet === "project" && projectRoot?.trim()) {
+      invalidateCachedProjectInventory(projectRoot);
+    } else if (dataSet === "skills" && ecosystem) {
+      invalidateCachedAgentGlobalInventory(ecosystem);
+      invalidateCachedProjectInventory();
+    }
+    setRefreshKey((k) => k + 1);
+  }, [dataSet, ecosystem, projectRoot]);
+
+  const refreshBusy =
+    (dataSet === "skills" &&
+      !!ecosystem &&
+      (liveLoading || aiScenarioBusy || aiBriefBusy)) ||
+    (dataSet === "project" &&
+      !!projectRoot?.trim() &&
+      (projectLoading || aiScenarioBusy || aiBriefBusy)) ||
+    (dataSet === "aggregate" &&
+      (aggregateLoading || aiScenarioBusy || aiBriefBusy));
 
   useEffect(() => {
     const k = searchParams.get("kind");
@@ -320,6 +365,7 @@ export default function SkillBrowseShell({
 
   useEffect(() => {
     setCardContextMenu(null);
+    setSkillCopyTargetModalRow(null);
   }, [dataSet, ecosystem, projectRoot]);
 
   useEffect(() => {
@@ -338,6 +384,15 @@ export default function SkillBrowseShell({
       document.removeEventListener("keydown", onKey);
     };
   }, [cardContextMenu]);
+
+  useEffect(() => {
+    if (!skillCopyTargetModalRow) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSkillCopyTargetModalRow(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [skillCopyTargetModalRow]);
 
   useEffect(() => {
     if (!ecosystem || dataSet !== "skills") {
@@ -426,7 +481,7 @@ export default function SkillBrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [ecosystem, dataSet, projectPaths]);
+  }, [ecosystem, dataSet, projectPaths, refreshKey]);
 
   useEffect(() => {
     if (dataSet !== "project") {
@@ -469,7 +524,7 @@ export default function SkillBrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [dataSet, projectRoot]);
+  }, [dataSet, projectRoot, refreshKey]);
 
   useEffect(() => {
     if (dataSet !== "aggregate") {
@@ -563,7 +618,7 @@ export default function SkillBrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [dataSet, projectPaths]);
+  }, [dataSet, projectPaths, refreshKey]);
 
   const { sections, scenarioCounts } = useMemo((): {
     sections: BrowseSection[];
@@ -744,12 +799,38 @@ export default function SkillBrowseShell({
       return;
     }
     const titled = sections.filter((s) => s.title);
-    if (titled.length === 1) {
-      setExpandedSectionKeys(new Set([titled[0]!.key]));
-    } else {
-      setExpandedSectionKeys(new Set());
-    }
+    const validKeys = new Set(titled.map((s) => s.key));
+
+    setExpandedSectionKeys((prev) => {
+      if (titled.length === 0) {
+        const next = new Set<string>();
+        return prev.size === 0 ? prev : next;
+      }
+      if (titled.length === 1) {
+        const only = titled[0]!.key;
+        return prev.size === 1 && prev.has(only)
+          ? prev
+          : new Set([only]);
+      }
+      const next = new Set<string>();
+      for (const k of prev) {
+        if (validKeys.has(k)) next.add(k);
+      }
+      return stringSetsEqual(prev, next) ? prev : next;
+    });
   }, [dataSet, sections]);
+
+  const copyMenuSections = useMemo(
+    () =>
+      buildCopySkillMenuSections({
+        dataSet,
+        ecosystem,
+        projectRoot,
+        projectPaths,
+        agentProjectScanPaths: agentProjectScans.map((s) => s.path),
+      }),
+    [dataSet, ecosystem, projectRoot, projectPaths, agentProjectScans],
+  );
 
   const listedTotal = sections.reduce((n, s) => n + s.rows.length, 0);
 
@@ -769,6 +850,7 @@ export default function SkillBrowseShell({
       title: item.title,
       description: item.desc,
       path: item.sourcePath,
+      skillExtraFiles: item.skillExtraFiles,
     });
   };
 
@@ -779,24 +861,25 @@ export default function SkillBrowseShell({
     e.stopPropagation();
     const pad = 8;
     const approxW = 220;
-    const approxH = 44;
+    const approxH = item.kind === "skill" ? 88 : 48;
     const vw = typeof window !== "undefined" ? window.innerWidth : e.clientX;
     const vh = typeof window !== "undefined" ? window.innerHeight : e.clientY;
     const x = Math.min(Math.max(pad, e.clientX), Math.max(pad, vw - approxW - pad));
     const y = Math.min(Math.max(pad, e.clientY), Math.max(pad, vh - approxH - pad));
-    setCardContextMenu({ x, y, path: p });
+    setCardContextMenu({ x, y, row: item });
   };
+
+  function cardHoverTitle(item: BrowseRow): string | undefined {
+    const d = item.desc.trim();
+    return d.length > 0 ? d : undefined;
+  }
 
   function renderBrowseCard(item: BrowseRow) {
     return (
       <article
         key={item.id}
         className="skill-card"
-        title={
-          item.sourcePath?.trim()
-            ? "右键菜单：在所在目录中显示"
-            : undefined
-        }
+        title={cardHoverTitle(item)}
         onClick={() => openDetail(item)}
         onContextMenu={
           item.sourcePath?.trim()
@@ -844,9 +927,17 @@ export default function SkillBrowseShell({
   return (
     <>
       <div className="page-header">
-        <div className="page-title__row">
-          <h2>{title}</h2>
-          <span className="count-badge">{listedTotal}</span>
+        <div className="page-header__title-bar">
+          <div className="page-title__row">
+            <h2>{title}</h2>
+            <span className="count-badge">{listedTotal}</span>
+          </div>
+          <PageRefreshButton
+            onClick={onRefreshInventory}
+            disabled={refreshBusy}
+            spinning={refreshBusy}
+            label="重新扫描并加载"
+          />
         </div>
         {subtitle ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.88rem" }}>
@@ -1016,13 +1107,56 @@ export default function SkillBrowseShell({
                 role="menuitem"
                 className="card-context-menu__item"
                 onClick={() => {
-                  void revealPathInFolder(cardContextMenu.path);
+                  const p = cardContextMenu.row.sourcePath?.trim();
+                  if (p) void revealPathInFolder(p);
                   setCardContextMenu(null);
                 }}
               >
                 在所在目录中显示
               </button>
+              {cardContextMenu.row.kind === "skill" &&
+              cardContextMenu.row.sourcePath?.trim() ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="card-context-menu__item"
+                  onClick={() => {
+                    setSkillCopyTargetModalRow(cardContextMenu.row);
+                    setCardContextMenu(null);
+                  }}
+                >
+                  复制到…
+                </button>
+              ) : null}
             </div>,
+            document.body,
+          )
+        : null}
+
+      {skillCopyTargetModalRow
+        ? createPortal(
+            <SkillCopyDestinationDialog
+              row={skillCopyTargetModalRow}
+              sections={copyMenuSections}
+              onClose={() => setSkillCopyTargetModalRow(null)}
+              onChoose={(payload) => {
+                const src = skillCopyTargetModalRow.sourcePath?.trim();
+                if (!src) return;
+                void (async () => {
+                  const r = await copySkillPackage({
+                    sourcePath: src,
+                    ...payload,
+                    onConflict: "suffix",
+                  });
+                  setSkillCopyTargetModalRow(null);
+                  if ("error" in r) {
+                    window.alert(`复制失败：${r.error}`);
+                    return;
+                  }
+                  void revealPathInFolder(r.path);
+                })();
+              }}
+            />,
             document.body,
           )
         : null}

@@ -10,6 +10,8 @@ export interface DetailEntry {
   title: string;
   description?: string;
   path?: string;
+  /** 技能目录内除主 SKILL.md 外的文件（扫描端填充） */
+  skillExtraFiles?: string[];
 }
 
 interface SkillDetailPanelProps {
@@ -277,7 +279,49 @@ function SkillDetailPanelContent({
       )}
 
       {docState.status === "loaded" && (
-        <SkillMarkdown content={docState.content} />
+        <>
+          {entry.kind === "skill" &&
+            entry.skillExtraFiles &&
+            entry.skillExtraFiles.length > 0 && (
+              <div
+                style={{
+                  marginBottom: 20,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    color: "var(--muted)",
+                    marginBottom: 8,
+                  }}
+                >
+                  包内其他文件
+                </div>
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: 18,
+                    fontSize: 12.5,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    color: "var(--foreground)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {entry.skillExtraFiles.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          <SkillMarkdown content={docState.content} />
+        </>
       )}
 
       {docState.status === "error" && (

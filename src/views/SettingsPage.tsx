@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PageRefreshButton } from "../components/PageRefreshButton";
 import {
   getDeepseekSettings,
   saveDeepseekSettings,
@@ -12,17 +13,32 @@ export default function SettingsPage() {
   const [saveHint, setSaveHint] = useState<string | null>(null);
   const [testHint, setTestHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
+  const [settingsReloading, setSettingsReloading] = useState(false);
 
   useEffect(() => {
-    getDeepseekSettings().then((s) => {
-      if (!s) {
+    let cancelled = false;
+    setSettingsReloading(true);
+    getDeepseekSettings()
+      .then((s) => {
+        if (cancelled) return;
+        setSettingsReloading(false);
+        if (!s) {
+          setLoadErr("无法读取设置（请在 AIControls 桌面端运行）。");
+          return;
+        }
+        setConfigured(s.apiKeyConfigured);
+        setLoadErr(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSettingsReloading(false);
         setLoadErr("无法读取设置（请在 AIControls 桌面端运行）。");
-        return;
-      }
-      setConfigured(s.apiKeyConfigured);
-      setLoadErr(null);
-    });
-  }, []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsRefreshKey]);
 
   async function onSave() {
     setSaveHint(null);
@@ -50,7 +66,15 @@ export default function SettingsPage() {
 
   return (
     <div className="card settings-page">
-      <h2 style={{ marginTop: 0 }}>设置</h2>
+      <div className="page-header__title-bar">
+        <h2>设置</h2>
+        <PageRefreshButton
+          onClick={() => setSettingsRefreshKey((k) => k + 1)}
+          disabled={busy || settingsReloading}
+          spinning={settingsReloading}
+          label="重新读取设置"
+        />
+      </div>
 
       <section style={{ marginTop: "1.25rem" }}>
         <h3 className="settings-block-title">DeepSeek</h3>

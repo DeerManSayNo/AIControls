@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import heroImage from "../../首页头图.png";
 import {
   getAgentGlobalInventoryCached,
+  invalidateCachedAgentGlobalInventory,
+  invalidateCachedProjectInventory,
   scanProjectDirectoryCached,
 } from "../api/agentInventoryCache";
 import {
@@ -11,6 +13,7 @@ import {
 } from "../api/agents";
 import { bucketInventoryByAgent, inventoryAssetCount } from "../agentAssetGrouping";
 import { useProjectPaths } from "../projectPathsStorage";
+import { PageRefreshButton } from "../components/PageRefreshButton";
 
 type Props = {
   title: string;
@@ -57,6 +60,8 @@ export default function ShellPage({ subtitle }: Props) {
       }
     >
   >({});
+  const [homeRefreshKey, setHomeRefreshKey] = useState(0);
+  const [homeScanBusy, setHomeScanBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,78 +72,90 @@ export default function ShellPage({ subtitle }: Props) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [homeRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
     const agentIds = detectedAgents.map((a) => a.id);
     const scanRoots = [...projectPaths];
 
-    (async () => {
-      const [agentInventories, scanInventories] = await Promise.all([
-        Promise.all(agentIds.map((id) => getAgentGlobalInventoryCached(id))),
-        Promise.all(scanRoots.map((root) => scanProjectDirectoryCached(root))),
-      ]);
-      if (cancelled) return;
+    if (agentIds.length === 0 && scanRoots.length === 0) {
+      setTotals({ skills: 0, mcp: 0, rules: 0 });
+      setProjectStats({});
+      setHomeScanBusy(false);
+      return;
+    }
 
-      const skillIds = new Set<string>();
-      const mcpIds = new Set<string>();
-      const ruleIds = new Set<string>();
-      const addInventory = (inv: AgentInventory | null) => {
-        if (!inv) return;
-        for (const e of inv.skills) skillIds.add(e.id);
-        for (const e of inv.mcp) mcpIds.add(e.id);
-        for (const e of inv.rules) ruleIds.add(e.id);
-      };
+    setHomeScanBusy(true);
+    void (async () => {
+      try {
+        const [agentInventories, scanInventories] = await Promise.all([
+          Promise.all(agentIds.map((id) => getAgentGlobalInventoryCached(id))),
+          Promise.all(scanRoots.map((root) => scanProjectDirectoryCached(root))),
+        ]);
+        if (cancelled) return;
 
-      for (const inv of agentInventories) addInventory(inv);
-      for (const inv of scanInventories) addInventory(inv);
+        const skillIds = new Set<string>();
+        const mcpIds = new Set<string>();
+        const ruleIds = new Set<string>();
+        const addInventory = (inv: AgentInventory | null) => {
+          if (!inv) return;
+          for (const e of inv.skills) skillIds.add(e.id);
+          for (const e of inv.mcp) mcpIds.add(e.id);
+          for (const e of inv.rules) ruleIds.add(e.id);
+        };
 
-      const nextProjectStats: Record<
-        string,
-        {
-          skills: number;
-          mcp: number;
-          rules: number;
-          status: "ok" | "error";
-          topAgent: string;
+        for (const inv of agentInventories) addInventory(inv);
+        for (const inv of scanInventories) addInventory(inv);
+
+        const nextProjectStats: Record<
+          string,
+          {
+            skills: number;
+            mcp: number;
+            rules: number;
+            status: "ok" | "error";
+            topAgent: string;
+          }
+        > = {};
+        for (let i = 0; i < scanRoots.length; i += 1) {
+          const root = scanRoots[i];
+          const inv = scanInventories[i];
+          if (inv) {
+            const topBucket = bucketInventoryByAgent(inv).sort(
+              (a, b) => inventoryAssetCount(b.inv) - inventoryAssetCount(a.inv),
+            )[0];
+            nextProjectStats[root] = {
+              ...summarizeInventory(inv),
+              status: "ok",
+              topAgent: topBucket ? fallbackAgentLabel(topBucket.agentId) : "未识别",
+            };
+          } else {
+            nextProjectStats[root] = {
+              skills: 0,
+              mcp: 0,
+              rules: 0,
+              status: "error",
+              topAgent: "扫描失败",
+            };
+          }
         }
-      > = {};
-      for (let i = 0; i < scanRoots.length; i += 1) {
-        const root = scanRoots[i];
-        const inv = scanInventories[i];
-        if (inv) {
-          const topBucket = bucketInventoryByAgent(inv).sort(
-            (a, b) => inventoryAssetCount(b.inv) - inventoryAssetCount(a.inv),
-          )[0];
-          nextProjectStats[root] = {
-            ...summarizeInventory(inv),
-            status: "ok",
-            topAgent: topBucket ? fallbackAgentLabel(topBucket.agentId) : "未识别",
-          };
-        } else {
-          nextProjectStats[root] = {
-            skills: 0,
-            mcp: 0,
-            rules: 0,
-            status: "error",
-            topAgent: "扫描失败",
-          };
-        }
+
+        setProjectStats(nextProjectStats);
+        setTotals({
+          skills: skillIds.size,
+          mcp: mcpIds.size,
+          rules: ruleIds.size,
+        });
+      } finally {
+        if (!cancelled) setHomeScanBusy(false);
       }
-
-      setProjectStats(nextProjectStats);
-      setTotals({
-        skills: skillIds.size,
-        mcp: mcpIds.size,
-        rules: ruleIds.size,
-      });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [detectedAgents, projectPaths]);
+  }, [detectedAgents, projectPaths, homeRefreshKey]);
 
   const metrics = useMemo(
     () => [
@@ -214,9 +231,23 @@ export default function ShellPage({ subtitle }: Props) {
     }
   };
 
+  const onRefreshHome = () => {
+    invalidateCachedAgentGlobalInventory();
+    invalidateCachedProjectInventory();
+    setHomeRefreshKey((k) => k + 1);
+  };
+
   return (
     <div className="home-board">
       <header className="home-board-hero">
+        <div className="home-board-hero__toolbar">
+          <PageRefreshButton
+            onClick={onRefreshHome}
+            disabled={homeScanBusy}
+            spinning={homeScanBusy}
+            label="重新扫描并加载"
+          />
+        </div>
         <div className="home-board-hero__content">
           <h1 className="home-board-hello">
             下午好，Controler <span aria-hidden>👋</span>

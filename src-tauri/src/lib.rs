@@ -2,6 +2,7 @@
 
 mod deepseek;
 mod scan;
+mod skill_copy;
 mod storage;
 
 use scan::AgentInventory;
@@ -130,6 +131,37 @@ fn reveal_path_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn list_visible_project_skill_buckets(
+    project_root: String,
+) -> Result<Vec<skill_copy::VisibleProjectSkillBucket>, String> {
+    skill_copy::list_visible_project_skill_buckets(&project_root)
+}
+
+/// 参数与前端 `invoke` 顶层 camelCase 字段一一对应（勿再用单字段 struct，否则需包一层 `{ args: {...} }`）。
+#[tauri::command]
+fn copy_skill_package(
+    source_path: String,
+    dest_kind: String,
+    agent_id: String,
+    bucket_index: usize,
+    project_root: Option<String>,
+    on_conflict: Option<String>,
+) -> Result<String, String> {
+    let suffix = match on_conflict.as_deref() {
+        Some("error") => false,
+        _ => true,
+    };
+    skill_copy::perform_copy(
+        &source_path,
+        &dest_kind,
+        &agent_id,
+        bucket_index,
+        project_root.as_deref(),
+        suffix,
+    )
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -144,6 +176,8 @@ pub fn run() {
             deepseek_classify_inventory,
             deepseek_summarize_inventory,
             reveal_path_in_folder,
+            copy_skill_package,
+            list_visible_project_skill_buckets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

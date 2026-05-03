@@ -464,6 +464,7 @@ main {
 .home-board-hero {
   display: grid;
   grid-template-columns: 1.08fr 1fr;
+  grid-template-rows: auto 1fr;
   gap: 0.55rem;
   border: none;
   border-radius: 14px;
@@ -472,10 +473,25 @@ main {
   padding: 0.58rem 0.95rem;
 }
 
+.home-board-hero__toolbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
 .home-board-hero__content {
+  grid-column: 1;
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+
+.home-board-hero .home-board-visual {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .home-board-hello {
@@ -1425,6 +1441,49 @@ main {
   flex-wrap: wrap;
 }
 
+.page-header__title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.page-header__title-bar .page-title__row {
+  flex: 1;
+  min-width: 0;
+}
+
+.page-header__title-bar .page-refresh-btn {
+  flex-shrink: 0;
+}
+
+.settings-page > .page-header__title-bar {
+  margin-top: 0;
+}
+
+.settings-page > .page-header__title-bar h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.page-refresh-btn__icon {
+  display: block;
+}
+
+.page-refresh-btn--spinning .page-refresh-btn__icon {
+  animation: page-refresh-spin 0.75s linear infinite;
+}
+
+@keyframes page-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .page-header h2 {
   margin: 0;
   font-size: 1.5rem;
@@ -1797,7 +1856,18 @@ main {
 
   .home-board-hero {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
     padding: 0.62rem 0.88rem;
+  }
+
+  .home-board-hero__content {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .home-board-hero .home-board-visual {
+    grid-column: 1;
+    grid-row: 3;
   }
 
   .home-board-visual,
@@ -2076,6 +2146,332 @@ main {
 .card-context-menu__item--danger:focus-visible {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
+}
+
+/* Skill：选择复制目标 */
+.skill-copy-dialog-root {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.skill-copy-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 5, 7, 0.55);
+  backdrop-filter: blur(10px) saturate(1.1);
+}
+
+.skill-copy-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(26rem, 100%);
+  max-height: min(32rem, calc(100vh - 2.5rem));
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.skill-copy-dialog--v2 {
+  width: min(34rem, 100%);
+  max-height: min(42rem, calc(100vh - 1.5rem));
+}
+
+.skill-copy-dialog__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.skill-copy-dialog__close:hover,
+.skill-copy-dialog__close:focus-visible {
+  background: var(--nav-item-hover);
+  color: var(--text);
+  border-color: var(--border);
+  outline: none;
+}
+
+.skill-copy-dialog__header {
+  flex-shrink: 0;
+  padding: 1.1rem 2.75rem 0.65rem 1.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.skill-copy-dialog__header--v2 {
+  padding-bottom: 0.55rem;
+  border-bottom: none;
+}
+
+.skill-copy-dialog__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.skill-copy-dialog__subtitle {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.skill-copy-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem 0.65rem 0.85rem;
+}
+
+.skill-copy-dialog__body--v2 {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.skill-copy-dialog__body--v2 > .skill-copy-dialog__empty:first-child:last-child {
+  padding: 1rem 1.15rem 1.25rem;
+  margin: 0;
+}
+
+.skill-copy-dialog__toolbar {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.skill-copy-dialog__search {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.48rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.skill-copy-dialog__search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.skill-copy-dialog__seg {
+  width: 100%;
+  justify-content: stretch;
+}
+
+.skill-copy-dialog__seg .seg__item {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.skill-copy-dialog__tab-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.12rem 0.38rem;
+  border-radius: 999px;
+  background: var(--nav-item-hover);
+  color: var(--muted);
+}
+
+.skill-copy-dialog__seg .seg__item.active .skill-copy-dialog__tab-badge {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+}
+
+.skill-copy-dialog__panel {
+  flex: 1;
+  min-height: 0;
+  max-height: min(22rem, 46vh);
+  overflow-y: auto;
+  padding: 0.65rem 0.85rem 1rem;
+}
+
+.skill-copy-dialog__block-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.skill-copy-dialog__block + .skill-copy-dialog__block {
+  margin-top: 0.85rem;
+}
+
+.skill-copy-dialog__option-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+}
+
+@media (min-width: 440px) {
+  .skill-copy-dialog__option-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.skill-copy-dialog__tile {
+  margin: 0;
+  padding: 0.48rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: left;
+  line-height: 1.38;
+  cursor: pointer;
+  transition:
+    background 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out);
+}
+
+.skill-copy-dialog__tile:hover,
+.skill-copy-dialog__tile:focus-visible {
+  background: var(--nav-item-hover);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.skill-copy-dialog__project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.skill-copy-dialog__project-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 0.45rem;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.skill-copy-dialog__project-item:last-child {
+  margin-bottom: 0;
+}
+
+.skill-copy-dialog__project-trigger {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.52rem 0.6rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+}
+
+.skill-copy-dialog__project-trigger:hover,
+.skill-copy-dialog__project-trigger:focus-visible {
+  background: var(--nav-item-hover);
+  outline: none;
+}
+
+.skill-copy-dialog__project-chevron {
+  flex-shrink: 0;
+  width: 1rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.65;
+}
+
+.skill-copy-dialog__project-trigger-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.skill-copy-dialog__project-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.skill-copy-dialog__project-path {
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-copy-dialog__project-count {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.14rem 0.42rem;
+  border-radius: 999px;
+  background: var(--nav-item-hover);
+  color: var(--muted);
+}
+
+.skill-copy-dialog__project-targets {
+  padding: 0 0.55rem 0.65rem 1.85rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+}
+
+.skill-copy-dialog__empty--inline {
+  margin: 0.65rem 0;
+}
+
+.skill-copy-dialog__gate-hint {
+  margin: 0;
+  padding: 0.35rem 0.15rem 0.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.skill-copy-dialog__empty {
+  margin: 0.75rem 0.5rem 0.35rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .side-nav-project-item {

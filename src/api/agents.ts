@@ -13,6 +13,8 @@ export type AssetEntry = {
   scenario?: string | null;
   /** DeepSeek 中文缩略介绍（<=100字） */
   brief_zh?: string | null;
+  /** 技能文件夹内除主 SKILL.md 外的其他文件名（path 为目录时由扫描端填充） */
+  skill_extra_files?: string[] | null;
 };
 
 export type AgentInventory = {
@@ -75,5 +77,53 @@ export async function getSkillDocument(
     return { filename, content };
   } catch {
     return null;
+  }
+}
+
+export type CopySkillPackageInput = {
+  sourcePath: string;
+  destKind: "global" | "project";
+  agentId: string;
+  bucketIndex: number;
+  projectRoot?: string;
+  onConflict?: "suffix" | "error";
+};
+
+function formatInvokeError(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+/** 列出某项目根下「磁盘上已存在 Agent 目录」时可用的复制桶；桌面端失败时返回 null（前端可退回展示全部）。 */
+export async function listVisibleProjectSkillBuckets(
+  projectRoot: string,
+): Promise<{ agentId: string; bucketIndex: number }[] | null> {
+  try {
+    return await invoke<{ agentId: string; bucketIndex: number }[]>(
+      "list_visible_project_skill_buckets",
+      { projectRoot },
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** 将技能包（目录或 skills 根下的单文件 + 可选同名文件夹）复制到允许的全局或项目 Agent skills 目录。 */
+export async function copySkillPackage(
+  input: CopySkillPackageInput,
+): Promise<{ path: string } | { error: string }> {
+  try {
+    const path = await invoke<string>("copy_skill_package", {
+      sourcePath: input.sourcePath,
+      destKind: input.destKind,
+      agentId: input.agentId,
+      bucketIndex: input.bucketIndex,
+      projectRoot: input.projectRoot ?? null,
+      onConflict: input.onConflict ?? "suffix",
+    });
+    return { path };
+  } catch (e) {
+    return { error: formatInvokeError(e) };
   }
 }
