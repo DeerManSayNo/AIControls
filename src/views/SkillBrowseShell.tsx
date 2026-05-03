@@ -773,11 +773,10 @@ export default function SkillBrowseShell({
   };
 
   const onCardContextMenu = (e: MouseEvent, item: BrowseRow) => {
-    if (dataSet !== "skills" && dataSet !== "project") return;
-    e.preventDefault();
-    e.stopPropagation();
     const p = item.sourcePath?.trim();
     if (!p) return;
+    e.preventDefault();
+    e.stopPropagation();
     const pad = 8;
     const approxW = 220;
     const approxH = 44;
@@ -794,13 +793,13 @@ export default function SkillBrowseShell({
         key={item.id}
         className="skill-card"
         title={
-          dataSet === "skills" || dataSet === "project"
+          item.sourcePath?.trim()
             ? "右键菜单：在所在目录中显示"
             : undefined
         }
         onClick={() => openDetail(item)}
         onContextMenu={
-          dataSet === "skills" || dataSet === "project"
+          item.sourcePath?.trim()
             ? (e) => onCardContextMenu(e, item)
             : undefined
         }

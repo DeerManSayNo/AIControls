@@ -9,7 +9,7 @@ let migrated = false;
 /** 空列表单例，避免 useSyncExternalStore 每次得到新 [] 导致无限重渲 */
 const EMPTY_PATHS: string[] = [];
 
-/** 与 sessionStorage 内容同步的缓存，保证 getSnapshot 在数据未变时返回同一引用 */
+/** 与 localStorage 内容同步的缓存，保证 getSnapshot 在数据未变时返回同一引用 */
 let cachedStorageRaw: string | null = null;
 let cachedPaths: string[] = EMPTY_PATHS;
 
@@ -17,15 +17,25 @@ export function normalizeProjectPath(p: string): string {
   return p.trim().replace(/[/\\]+$/, "");
 }
 
+/** 从仅 session 的旧版迁入 localStorage，关闭应用后仍保留项目列表 */
 function migrateLegacyOnce(): void {
-  if (migrated || typeof sessionStorage === "undefined") return;
+  if (migrated || typeof localStorage === "undefined") return;
   migrated = true;
   try {
-    if (sessionStorage.getItem(STORAGE_KEY)) return;
-    const legacy = sessionStorage.getItem(LEGACY_KEY);
-    if (legacy) {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify([legacy]));
-      sessionStorage.removeItem(LEGACY_KEY);
+    if (localStorage.getItem(STORAGE_KEY)) return;
+
+    if (typeof sessionStorage !== "undefined") {
+      const sessionList = sessionStorage.getItem(STORAGE_KEY);
+      if (sessionList) {
+        localStorage.setItem(STORAGE_KEY, sessionList);
+        sessionStorage.removeItem(STORAGE_KEY);
+        return;
+      }
+      const legacy = sessionStorage.getItem(LEGACY_KEY);
+      if (legacy) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([legacy]));
+        sessionStorage.removeItem(LEGACY_KEY);
+      }
     }
   } catch {
     /* ignore */
@@ -34,9 +44,9 @@ function migrateLegacyOnce(): void {
 
 export function readProjectPaths(): string[] {
   migrateLegacyOnce();
-  if (typeof sessionStorage === "undefined") return EMPTY_PATHS;
+  if (typeof localStorage === "undefined") return EMPTY_PATHS;
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY) ?? "";
+    const raw = localStorage.getItem(STORAGE_KEY) ?? "";
     if (raw === cachedStorageRaw) {
       return cachedPaths;
     }
@@ -70,7 +80,7 @@ export function pathsReferToSameDir(a: string, b: string): boolean {
 export function appendProjectPath(path: string): string[] {
   migrateLegacyOnce();
   const trimmed = path.trim();
-  if (!trimmed || typeof sessionStorage === "undefined") return readProjectPaths();
+  if (!trimmed || typeof localStorage === "undefined") return readProjectPaths();
 
   const paths = readProjectPaths();
   if (paths.some((p) => pathsReferToSameDir(p, trimmed))) {
@@ -79,7 +89,29 @@ export function appendProjectPath(path: string): string[] {
 
   const next = [...paths, trimmed];
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    return paths;
+  }
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+  return next;
+}
+
+/** 从已保存列表中移除路径（按目录等价匹配）；返回当前完整列表。 */
+export function removeProjectPath(path: string): string[] {
+  migrateLegacyOnce();
+  if (typeof localStorage === "undefined") return readProjectPaths();
+
+  const paths = readProjectPaths();
+  const next = paths.filter((p) => !pathsReferToSameDir(p, path));
+  if (next.length === paths.length) return paths;
+
+  try {
+    if (next.length === 0) {
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    }
   } catch {
     return paths;
   }

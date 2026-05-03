@@ -11,8 +11,8 @@ import {
 import AddProjectNavButton from "./components/AddProjectNavButton";
 import BrandLogo from "./components/BrandLogo";
 import AgentNavLinks from "./components/AgentNavLinks";
+import ProjectNavItem from "./components/ProjectNavItem";
 import {
-  NavIconFolder,
   NavIconHome,
   NavIconLayers,
   NavIconSettings,
@@ -83,22 +83,11 @@ function Layout({ children }: { children: ReactNode }) {
 
         <div className="side-nav-section-label">全部项目</div>
         {projectPaths.map((p) => {
-          const to = `/project?path=${encodeURIComponent(p)}`;
           const isCurrent =
             activeProjectPath !== null &&
             pathsReferToSameDir(activeProjectPath, p);
           return (
-            <NavLink
-              key={p}
-              to={to}
-              className={() => navClass(isCurrent)}
-              title={p}
-            >
-              <span className="side-nav-link__icon">
-                <NavIconFolder />
-              </span>
-              <span className="side-nav-link__label">{folderBasename(p)}</span>
-            </NavLink>
+            <ProjectNavItem key={p} projectPath={p} isCurrent={isCurrent} />
           );
         })}
         <AddProjectNavButton />
