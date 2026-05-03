@@ -2,10 +2,12 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   getAgentGlobalInventory,
+  listDetectedAgents,
   scanProjectDirectory,
   type AgentInventory,
   type AssetEntry,
 } from "../api/agents";
+import { useProjectPaths } from "../projectPathsStorage";
 import { SkillDetailPanel, type DetailEntry } from "../components/SkillDetailPanel";
 
 type AssetKind = "skill" | "mcp" | "rule";
@@ -22,62 +24,26 @@ type BrowseRow = {
   sourcePath?: string;
 };
 
-const MOCK_ITEMS: BrowseRow[] = [
-  {
-    id: "1",
-    title: "代码搜索与分析",
-    desc: "在仓库内按语义查找实现位置，并简述各文件职责。",
-    kind: "skill",
-    ecosystem: "cursor",
-    tags: ["Skill", "Cursor"],
-    active: true,
-  },
-  {
-    id: "2",
-    title: "composition-patterns",
-    desc: "React 复合组件与可扩展 API 的写法参考。",
-    kind: "skill",
-    ecosystem: "claude",
-    tags: ["Skill", "Claude Code"],
-    active: true,
-  },
-  {
-    id: "3",
-    title: "GitHub 检索",
-    desc: "通过 MCP 在 GitHub 上搜索代码与 Issue。",
-    kind: "mcp",
-    ecosystem: "cursor",
-    tags: ["MCP", "Cursor"],
-    active: false,
-  },
-  {
-    id: "4",
-    title: "前端性能清单",
-    desc: "发布前自检：包体、列表渲染与数据请求。",
-    kind: "rule",
-    ecosystem: "claude",
-    tags: ["Rules", "Claude Code"],
-    active: true,
-  },
-  {
-    id: "5",
-    title: "API 设计约定",
-    desc: "REST 路径、错误码与版本策略的统一说明。",
-    kind: "rule",
-    ecosystem: "cursor",
-    tags: ["Rules", "Cursor"],
-    active: true,
-  },
-  {
-    id: "6",
-    title: "MasterGo DSL",
-    desc: "从设计稿链接拉取结构并生成组件说明。",
-    kind: "mcp",
-    ecosystem: "claude",
-    tags: ["MCP", "Claude Code"],
-    active: false,
-  },
-];
+/** 与 App 侧栏 Agent 名称一致；在「全部」汇总页用于兜底扫描 */
+const AGENT_LABEL_BY_ID: Record<string, string> = {
+  cursor: "Cursor",
+  claude: "Claude Code",
+  trae: "Trae",
+  qoder: "Qoder",
+  kiro: "Kiro",
+};
+
+const FALLBACK_AGENT_IDS = ["cursor", "claude", "trae", "qoder", "kiro"] as const;
+
+function folderBasename(path: string): string {
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+}
+
+type AggregateSnapshot = {
+  agents: { id: string; title: string; inv: AgentInventory | null }[];
+  projects: { path: string; inv: AgentInventory | null }[];
+  anyInventoryFailed: boolean;
+};
 
 type FilterKey = "all" | AssetKind;
 
@@ -118,8 +84,8 @@ type Props = {
   title: string;
   /** 与侧栏 Agent 一致时展示该生态；支持扫描到的全部 id */
   ecosystem?: string;
-  /** 默认占位列表；`project` 为所选目录的扫描结果 */
-  dataSet?: "skills" | "project";
+  /** `project` 为所选目录；`aggregate` 汇总全部 Agent 全局配置与侧栏全部项目 */
+  dataSet?: "skills" | "project" | "aggregate";
   /** 页标题下方一行说明（例如来自 ?path=） */
   subtitle?: string;
   /** 项目根目录（仅 `dataSet="project"`），由 ?path= 传入 */
@@ -149,6 +115,13 @@ export default function SkillBrowseShell({
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectFailed, setProjectFailed] = useState(false);
 
+  const projectPaths = useProjectPaths();
+  const [aggregateSnapshot, setAggregateSnapshot] =
+    useState<AggregateSnapshot | null>(null);
+  const [aggregateLoading, setAggregateLoading] = useState(
+    () => dataSet === "aggregate",
+  );
+
   useEffect(() => {
     const k = searchParams.get("kind");
     if (k === "skill" || k === "mcp" || k === "rule") {
@@ -157,7 +130,7 @@ export default function SkillBrowseShell({
   }, [searchParams]);
 
   useEffect(() => {
-    if (!ecosystem || dataSet === "project") {
+    if (!ecosystem || dataSet !== "skills") {
       setLiveInv(undefined);
       setLiveFailed(false);
       setLiveLoading(false);
@@ -212,6 +185,62 @@ export default function SkillBrowseShell({
     };
   }, [dataSet, projectRoot]);
 
+  useEffect(() => {
+    if (dataSet !== "aggregate") {
+      setAggregateLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAggregateLoading(true);
+    setAggregateSnapshot(null);
+
+    (async () => {
+      const detected = await listDetectedAgents();
+      const specs =
+        detected && detected.length > 0
+          ? detected.map((a) => ({
+              id: a.id,
+              title: AGENT_LABEL_BY_ID[a.id] ?? a.label ?? a.id,
+            }))
+          : FALLBACK_AGENT_IDS.map((id) => ({
+              id,
+              title: AGENT_LABEL_BY_ID[id] ?? id,
+            }));
+
+      const agentResults = await Promise.all(
+        specs.map(async (spec) => ({
+          id: spec.id,
+          title: spec.title,
+          inv: await getAgentGlobalInventory(spec.id),
+        })),
+      );
+
+      const projectResults = await Promise.all(
+        projectPaths.map(async (path) => ({
+          path,
+          inv: await scanProjectDirectory(path),
+        })),
+      );
+
+      if (cancelled) return;
+
+      const anyInventoryFailed =
+        agentResults.some((r) => r.inv === null) ||
+        projectResults.some((r) => r.inv === null);
+
+      setAggregateSnapshot({
+        agents: agentResults,
+        projects: projectResults,
+        anyInventoryFailed,
+      });
+      setAggregateLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataSet, projectPaths]);
+
   const items = useMemo(() => {
     if (dataSet === "project") {
       if (!projectRoot) {
@@ -242,7 +271,46 @@ export default function SkillBrowseShell({
       return [];
     }
 
-    if (ecosystem && dataSet !== "project") {
+    if (dataSet === "aggregate") {
+      if (aggregateLoading || aggregateSnapshot === null) {
+        return [];
+      }
+      let rows: BrowseRow[] = [];
+      for (const a of aggregateSnapshot.agents) {
+        if (!a.inv) continue;
+        rows.push(
+          ...inventoryToRows(a.inv, a.id, a.title).map((r) => ({
+            ...r,
+            id: `g:${a.id}:${r.id}`,
+          })),
+        );
+      }
+      for (const p of aggregateSnapshot.projects) {
+        if (!p.inv) continue;
+        const bn = folderBasename(p.path);
+        rows.push(
+          ...inventoryToRows(p.inv, "project", bn).map((r) => ({
+            ...r,
+            id: `p:${p.path}:${r.id}`,
+          })),
+        );
+      }
+      if (filter !== "all") {
+        rows = rows.filter((r) => r.kind === filter);
+      }
+      const q = query.trim().toLowerCase();
+      if (q) {
+        rows = rows.filter(
+          (r) =>
+            r.title.toLowerCase().includes(q) ||
+            r.desc.toLowerCase().includes(q) ||
+            (r.sourcePath?.toLowerCase().includes(q) ?? false),
+        );
+      }
+      return rows;
+    }
+
+    if (ecosystem && dataSet === "skills") {
       if (liveLoading && liveInv === undefined) {
         return [];
       }
@@ -267,22 +335,7 @@ export default function SkillBrowseShell({
       }
     }
 
-    const base = MOCK_ITEMS;
-    let rows = [...base];
-    if (ecosystem) {
-      rows = rows.filter((r) => r.ecosystem === ecosystem);
-    }
-    if (filter !== "all") {
-      rows = rows.filter((r) => r.kind === filter);
-    }
-    const q = query.trim().toLowerCase();
-    if (q) {
-      rows = rows.filter(
-        (r) =>
-          r.title.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q),
-      );
-    }
-    return rows;
+    return [];
   }, [
     dataSet,
     ecosystem,
@@ -296,11 +349,13 @@ export default function SkillBrowseShell({
     projectInv,
     projectFailed,
     projectLoading,
+    aggregateSnapshot,
+    aggregateLoading,
   ]);
 
   const showLiveSubtitle =
     ecosystem &&
-    dataSet !== "project" &&
+    dataSet === "skills" &&
     liveInv &&
     !liveFailed &&
     !liveLoading;
@@ -324,7 +379,7 @@ export default function SkillBrowseShell({
             {subtitle}
           </p>
         ) : null}
-        {ecosystem && dataSet !== "project" ? (
+        {ecosystem && dataSet === "skills" ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {liveLoading
               ? "正在读取本机全局目录（不含项目内配置）…"
@@ -346,6 +401,15 @@ export default function SkillBrowseShell({
                   : showProjectHint
                     ? "以下为各 Agent 约定目录下的 Skills（如 .claude/skills、.cursor/skills 等下的 SKILL.md）、MCP（JSON）与 Rules，已忽略 node_modules 等无关目录；不扫描整仓库中任意位置的 SKILL.md。"
                     : null}
+          </p>
+        ) : null}
+        {dataSet === "aggregate" ? (
+          <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+            {aggregateLoading || aggregateSnapshot === null
+              ? "正在汇总各 Agent 用户级全局目录与侧栏已添加项目…"
+              : aggregateSnapshot.anyInventoryFailed
+                ? "部分目录读取失败，已展示可用结果。"
+                : "包含所有已识别 Agent 的全局 Skills、MCP、Rules，以及「全部项目」中各目录的扫描结果。"}
           </p>
         ) : null}
       </div>
@@ -441,8 +505,9 @@ export default function SkillBrowseShell({
       />
 
       {items.length === 0 &&
-      !(ecosystem && dataSet !== "project" && (liveLoading || liveFailed)) &&
-      !(dataSet === "project" && projectLoading) ? (
+      !(ecosystem && dataSet === "skills" && (liveLoading || liveFailed)) &&
+      !(dataSet === "project" && projectLoading) &&
+      !(dataSet === "aggregate" && (aggregateLoading || aggregateSnapshot === null)) ? (
         <p className="muted" style={{ marginTop: "1rem" }}>
           {dataSet === "project"
             ? !projectRoot
@@ -450,9 +515,11 @@ export default function SkillBrowseShell({
               : projectFailed
                 ? null
                 : "所选目录下未发现条目，或没有符合当前筛选的结果。"
-            : ecosystem && dataSet !== "project"
-              ? "没有符合条件的全局条目。"
-              : "没有符合当前筛选条件的条目（占位数据）。"}
+            : dataSet === "aggregate"
+              ? "未发现任何条目，或没有符合当前筛选的结果。"
+              : ecosystem && dataSet === "skills"
+                ? "没有符合条件的全局条目。"
+                : "没有符合当前筛选条件的条目。"}
         </p>
       ) : null}
     </>

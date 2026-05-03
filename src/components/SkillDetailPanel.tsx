@@ -23,25 +23,115 @@ type ContentState =
   | { status: "error"; message: string }
   | { status: "nosupport" };
 
-/** 从 YAML frontmatter 中提取 description 字段，并返回去掉 frontmatter 的 body */
+/** ATX H1：`# 标题`，排除 `##`。 */
+function isAtxH1Line(line: string): boolean {
+  const t = line.trimStart();
+  return t.startsWith("#") && !t.startsWith("##");
+}
+
+function yamlBlockScalarStarts(rest: string): boolean {
+  const t = rest.trim();
+  return t.startsWith("|") || t.startsWith(">");
+}
+
+/** Short `key:` / `key: token` siblings in YAML frontmatter（避免误判 `Note: long prose`）。 */
+function lineLooksLikeYamlMapKey(line: string): boolean {
+  const t = line.trimStart();
+  if (!t || isAtxH1Line(line)) return false;
+  const colon = t.indexOf(":");
+  if (colon <= 0) return false;
+  const key = t.slice(0, colon);
+  if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(key)) return false;
+  const after = t.slice(colon + 1).trim();
+  if (!after) return true;
+  if (after.startsWith('"') || after.startsWith("'")) return true;
+  return after.split(/\s+/).length === 1;
+}
+
+function collectDescriptionBlockScalar(
+  lines: string[],
+  start: number,
+  stopOnYamlMapKey: boolean
+): string | undefined {
+  const buf: string[] = [];
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i];
+    if (isAtxH1Line(line)) break;
+    if (stopOnYamlMapKey && lineLooksLikeYamlMapKey(line)) break;
+    buf.push(line);
+  }
+  while (buf.length && buf[buf.length - 1].trim() === "") buf.pop();
+  const folded = buf
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .join(" ");
+  return folded || undefined;
+}
+
+function unquoteYamlScalar(s: string): string {
+  const t = s.trim();
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    return t.slice(1, -1).replace(/\\"/g, '"');
+  }
+  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'")) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+
+/** `description:` 行内标量，或块标量（`>-`、`|` 等），与 scan.rs 一致。 */
+function extractDescriptionFromYamlLike(
+  text: string,
+  stopOnYamlMapKey: boolean
+): string | undefined {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trimStart();
+    if (!trimmed.startsWith("description:")) continue;
+    const rest = trimmed.slice("description:".length).trimStart();
+    if (yamlBlockScalarStarts(rest)) {
+      return collectDescriptionBlockScalar(lines, i + 1, stopOnYamlMapKey);
+    }
+    const val = rest.trim();
+    if (val) return unquoteYamlScalar(val);
+  }
+  return undefined;
+}
+
+/** `* * *` + `## name:` + `description:` 等，出现在首个一级标题之前（与 scan.rs 一致）。 */
+function extractDescriptionFromPseudoHeader(text: string): string | undefined {
+  const MAX = 80;
+  const lines = text.split("\n");
+  const header: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isAtxH1Line(line)) break;
+    header.push(line);
+    if (header.length >= MAX) break;
+  }
+  return extractDescriptionFromYamlLike(header.join("\n"), false);
+}
+
+/** 从 `---` YAML 或非标准头里提取 description，并返回去掉标准 frontmatter 的 body */
 function parseFrontmatter(content: string): { description?: string; body: string } {
   const trimmed = content.trimStart();
-  if (!trimmed.startsWith("---")) {
-    return { body: content };
+  let body = content;
+  let description: string | undefined;
+
+  if (trimmed.startsWith("---")) {
+    const afterFirst = trimmed.slice(3);
+    const endIdx = afterFirst.indexOf("\n---");
+    if (endIdx !== -1) {
+      const frontmatter = afterFirst.slice(0, endIdx);
+      body = afterFirst.slice(endIdx + 4).trimStart();
+      description = extractDescriptionFromYamlLike(frontmatter, true);
+    }
   }
 
-  const afterFirst = trimmed.slice(3);
-  const endIdx = afterFirst.indexOf("\n---");
-  if (endIdx === -1) {
-    return { body: content };
+  if (!description) {
+    const pseudo = extractDescriptionFromPseudoHeader(trimmed);
+    if (pseudo) description = pseudo;
   }
-
-  const frontmatter = afterFirst.slice(0, endIdx);
-  const body = afterFirst.slice(endIdx + 4).trimStart();
-
-  // 从 frontmatter 中提取 description
-  const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
-  const description = descMatch?.[1]?.trim();
 
   return { description, body };
 }
@@ -156,18 +246,19 @@ function SkillDetailPanelContent({
     </div>
   );
 
+  const sheetDescriptionText =
+    docState.status === "loaded"
+      ? docState.fmDescription?.trim() || entry.description?.trim()
+      : entry.description?.trim();
+
   return (
     <DetailSheet
       open={true}
       title={entry.title}
       description={
-        docState.status === "loaded"
-          ? docState.fmDescription
-            ? <p style={{ margin: 0, lineClamp: 3 } as React.CSSProperties}>{docState.fmDescription}</p>
-            : undefined
-          : entry.description
-            ? <p style={{ margin: 0, lineClamp: 3 } as React.CSSProperties}>{entry.description}</p>
-            : undefined
+        sheetDescriptionText ? (
+          <p style={{ margin: 0, lineClamp: 3 } as React.CSSProperties}>{sheetDescriptionText}</p>
+        ) : undefined
       }
       meta={meta}
       onClose={onClose}

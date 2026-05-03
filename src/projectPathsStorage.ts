@@ -73,7 +73,6 @@ export function appendProjectPath(path: string): string[] {
   if (!trimmed || typeof sessionStorage === "undefined") return readProjectPaths();
 
   const paths = readProjectPaths();
-  const n = normalizeProjectPath(trimmed);
   if (paths.some((p) => pathsReferToSameDir(p, trimmed))) {
     return paths;
   }

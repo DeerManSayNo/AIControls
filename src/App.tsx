@@ -132,7 +132,10 @@ export default function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<ShellPage title="首页" />} />
-        <Route path="/assets" element={<SkillBrowseShell title="全部" />} />
+        <Route
+          path="/assets"
+          element={<SkillBrowseShell title="全部" dataSet="aggregate" />}
+        />
         <Route path="/settings" element={<ShellPage title="设置" />} />
         <Route path="/agent/:ecosystem" element={<AgentRoute />} />
         <Route path="/project" element={<ProjectRoute />} />

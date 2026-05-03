@@ -303,27 +303,184 @@ fn collect_rule_files(root: &Path, out: &mut Vec<PathBuf>) {
 
 fn read_preview(path: &Path, max: usize) -> String {
     fs::read_to_string(path)
-        .map(|s| trim_frontmatter_preview(&s, max))
+        .map(|s| preview_from_markdown(&s, max))
         .unwrap_or_default()
 }
 
-fn trim_frontmatter_preview(s: &str, max: usize) -> String {
+/// Matches `SkillDetailPanel` / Cursor skill convention: prefer YAML `description:` in frontmatter,
+/// else first non-empty line of the Markdown body (often `# Title`).
+fn preview_from_markdown(s: &str, max: usize) -> String {
     let t = s.trim();
-    let body = if t.starts_with("---") {
+    let (fm_opt, body): (Option<&str>, &str) = if t.starts_with("---") {
         if let Some(rest) = t.strip_prefix("---") {
             if let Some(end) = rest.find("\n---") {
-                rest[end + 4..].trim()
+                (Some(rest[..end].trim()), rest[end + 4..].trim())
             } else {
-                t
+                (None, t)
             }
         } else {
-            t
+            (None, t)
         }
     } else {
-        t
+        (None, t)
     };
+
+    if let Some(fm) = fm_opt {
+        if let Some(desc) = extract_description_from_yaml_like(fm, true) {
+            let desc = desc.trim();
+            if !desc.is_empty() {
+                return truncate_chars(desc, max);
+            }
+        }
+    }
+
+    // Cursor-style skills: `* * *` + `## name:` + `description: ...` before first ATX H1 (`# `).
+    if let Some(desc) = description_in_pseudo_header(t) {
+        let desc = desc.trim();
+        if !desc.is_empty() {
+            return truncate_chars(desc, max);
+        }
+    }
+
     let one_line = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
     truncate_chars(one_line.trim(), max)
+}
+
+/// `description:` inline scalar, or YAML block scalar (`|`, `>-`, …) until H1 / sibling map key.
+fn extract_description_from_yaml_like(text: &str, stop_on_yaml_map_key: bool) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim_start();
+        let Some(after_desc) = trimmed.strip_prefix("description:") else {
+            i += 1;
+            continue;
+        };
+        let rest = after_desc.trim_start();
+
+        if yaml_block_scalar_starts(rest) {
+            i += 1;
+            return collect_description_block_scalar(&lines, i, stop_on_yaml_map_key);
+        }
+
+        let val = rest.trim();
+        if !val.is_empty() {
+            return Some(unquote_yaml_scalar(val));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn yaml_block_scalar_starts(rest: &str) -> bool {
+    let s = rest.trim();
+    let Some(first) = s.chars().next() else {
+        return false;
+    };
+    first == '|' || first == '>'
+}
+
+/// Fold block lines into one line (YAML folded style approximation).
+fn collect_description_block_scalar(
+    lines: &[&str],
+    mut i: usize,
+    stop_on_yaml_map_key: bool,
+) -> Option<String> {
+    let mut buf: Vec<&str> = Vec::new();
+    while i < lines.len() {
+        let line = lines[i];
+        if is_atx_h1_line(line) {
+            break;
+        }
+        if stop_on_yaml_map_key && line_looks_like_yaml_map_key(line) {
+            break;
+        }
+        buf.push(line);
+        i += 1;
+    }
+    while buf.last().is_some_and(|l| l.trim().is_empty()) {
+        buf.pop();
+    }
+    if buf.is_empty() {
+        return None;
+    }
+    let folded = buf
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if folded.is_empty() {
+        None
+    } else {
+        Some(folded)
+    }
+}
+
+/// Short `key:` / `key: token` lines after `description:` block (YAML frontmatter siblings).
+fn line_looks_like_yaml_map_key(line: &str) -> bool {
+    let t = line.trim_start();
+    if t.is_empty() || is_atx_h1_line(line) {
+        return false;
+    }
+    let Some(colon_idx) = t.find(':') else {
+        return false;
+    };
+    let key = &t[..colon_idx];
+    if key.is_empty() {
+        return false;
+    }
+    let mut key_chars = key.chars();
+    let Some(first) = key_chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    if !key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return false;
+    }
+    let after = t[colon_idx + 1..].trim();
+    if after.is_empty() {
+        return true;
+    }
+    if after.starts_with('"') || after.starts_with('\'') {
+        return true;
+    }
+    after.split_whitespace().count() == 1
+}
+
+/// ATX H1: line starts with `#` but not `##` (after leading whitespace).
+fn is_atx_h1_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with('#') && !t.starts_with("##")
+}
+
+/// Lines before the first H1, capped — matches skills that use `* * *` / `## name:` instead of `---` YAML.
+fn description_in_pseudo_header(content: &str) -> Option<String> {
+    const MAX_HEADER_LINES: usize = 80;
+    let mut header_lines = Vec::new();
+    for line in content.lines().take(MAX_HEADER_LINES) {
+        if is_atx_h1_line(line) {
+            break;
+        }
+        header_lines.push(line);
+    }
+    extract_description_from_yaml_like(&header_lines.join("\n"), false)
+}
+
+fn unquote_yaml_scalar(s: &str) -> String {
+    let s = s.trim();
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        s[1..s.len() - 1].replace("\\\"", "\"")
+    } else if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
