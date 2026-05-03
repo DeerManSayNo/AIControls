@@ -372,6 +372,8 @@ export default function SkillBrowseShell({
     const k = searchParams.get("kind");
     if (k === "skill" || k === "mcp" || k === "rule") {
       setFilter(k);
+    } else {
+      setFilter("all");
     }
   }, [searchParams]);
 

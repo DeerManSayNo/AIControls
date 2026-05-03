@@ -586,6 +586,23 @@ main {
   padding: 0.8rem 0.85rem 0.76rem;
 }
 
+.home-board-metric--interactive {
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.home-board-metric--interactive:hover {
+  border-color: #c5d0e0;
+  box-shadow: 0 2px 8px rgba(17, 20, 24, 0.06);
+}
+
+.home-board-metric--interactive:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
 .home-board-metric__label {
   margin: 0;
   display: inline-flex;

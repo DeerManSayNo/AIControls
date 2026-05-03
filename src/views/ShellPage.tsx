@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import heroImage from "../../首页头图.png";
 import { openProjectPath } from "../api/openProject";
 import { revealPathInFolder } from "../api/reveal";
@@ -48,9 +49,23 @@ function summarizeInventory(inv: AgentInventory) {
   };
 }
 
+/** 首页统计卡片 →「全部」页；与 `SkillBrowseShell` 的 `?kind=` 约定一致 */
+function assetsPathForHomeMetric(metricKey: string): string {
+  if (metricKey === "skills") return "/assets?kind=skill";
+  if (metricKey === "mcp") return "/assets?kind=mcp";
+  if (metricKey === "rules") return "/assets?kind=rule";
+  return "/assets";
+}
+
+function appLabelFromPath(appPath: string): string {
+  const base = appPath.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? appPath;
+  return base.replace(/\.(app|exe)$/i, "");
+}
+
 type ProjectMenuState = { path: string; left: number; top: number };
 
 export default function ShellPage({ subtitle }: Props) {
+  const navigate = useNavigate();
   const projectPaths = useProjectPaths();
   const [projectMenu, setProjectMenu] = useState<ProjectMenuState | null>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
@@ -324,17 +339,37 @@ export default function ShellPage({ subtitle }: Props) {
       </header>
 
       <section className="home-board-metrics" aria-label="统计概览">
-        {metrics.map((item) => (
-          <article key={item.label} className={`home-board-metric home-board-metric--${item.key}`}>
-            <p className="home-board-metric__label">
-              <span className="home-board-metric__icon" aria-hidden>
-                {renderMetricIcon(item.key)}
-              </span>
-              {item.label}
-            </p>
-            <p className="home-board-metric__value">{item.value}</p>
-          </article>
-        ))}
+        {metrics.map((item) => {
+          const to = assetsPathForHomeMetric(item.key);
+          const navTitle =
+            item.key === "skills" || item.key === "mcp" || item.key === "rules"
+              ? `前往「全部」资产页（${item.label}）`
+              : "前往「全部」资产页";
+          return (
+            <article
+              key={item.label}
+              className={`home-board-metric home-board-metric--${item.key} home-board-metric--interactive`}
+              role="button"
+              tabIndex={0}
+              title={navTitle}
+              onClick={() => navigate(to)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  navigate(to);
+                }
+              }}
+            >
+              <p className="home-board-metric__label">
+                <span className="home-board-metric__icon" aria-hidden>
+                  {renderMetricIcon(item.key)}
+                </span>
+                {item.label}
+              </p>
+              <p className="home-board-metric__value">{item.value}</p>
+            </article>
+          );
+        })}
       </section>
 
       <section className="home-board-projects" aria-label="最近项目">
@@ -391,7 +426,18 @@ export default function ShellPage({ subtitle }: Props) {
                 <span>◈ {project.rules}</span>
               </div>
               <div className="home-board-project-card__foot">
-                <span className="home-board-chip">{project.agent}</span>
+                {(() => {
+                  const customApp = getOpenAppForProject(project.path);
+                  const label = customApp ? appLabelFromPath(customApp) : "VS Code";
+                  const title = customApp
+                    ? `打开应用：${customApp}`
+                    : "打开应用：默认（VS Code → Cursor → 文件夹）";
+                  return (
+                    <span className="home-board-chip" title={title}>
+                      {label}
+                    </span>
+                  );
+                })()}
                 <span>{project.updated}</span>
               </div>
             </article>
