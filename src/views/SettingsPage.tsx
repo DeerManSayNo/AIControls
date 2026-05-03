@@ -49,12 +49,12 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="card">
+    <div className="card settings-page">
       <h2 style={{ marginTop: 0 }}>设置</h2>
 
-      <section style={{ marginTop: "1.1rem" }}>
-        <h3 style={{ fontSize: "1rem", margin: "0 0 0.45rem" }}>DeepSeek</h3>
-        <p className="muted" style={{ margin: "0 0 0.85rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
+      <section style={{ marginTop: "1.25rem" }}>
+        <h3 className="settings-block-title">DeepSeek</h3>
+        <p className="muted" style={{ margin: "0 0 1rem" }}>
           在此填写 DeepSeek API Key，保存在本应用本地数据目录（不会上传到 AIControls 服务端）。
           进入 Agent / 项目 /「全部」浏览页并完成扫描后，应用会为尚未写入本地缓存的
           Skill、MCP、Rules 调用 DeepSeek 打上场景分类（开发 / 办公 / 创作等），结果写入磁盘；

@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { appendProjectPath } from "../projectPathsStorage";
+import { NavIconFolderPlus } from "./navIcons";
 
 export default function AddProjectNavButton() {
   const navigate = useNavigate();
@@ -37,7 +38,12 @@ export default function AddProjectNavButton() {
       onClick={pickFolder}
       title="选择本地文件夹并扫描其中配置"
     >
-      + 添加项目
+      <span className="side-nav-link__icon">
+        <NavIconFolderPlus />
+      </span>
+      <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+        添加项目
+      </span>
     </button>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { listDetectedAgents, type AgentScanResult } from "../api/agents";
+import { NavIconForAgent } from "./navIcons";
 
 function navClass(active: boolean) {
   return `side-nav-link${active ? " active" : ""}`;
@@ -40,7 +41,10 @@ export default function AgentNavLinks() {
           to={`/agent/${a.id}`}
           className={({ isActive }) => navClass(isActive)}
         >
-          {a.label}
+          <span className="side-nav-link__icon">
+            {NavIconForAgent(a.id)}
+          </span>
+          <span className="side-nav-link__label">{a.label}</span>
         </NavLink>
       ))}
     </>

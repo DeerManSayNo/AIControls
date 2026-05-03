@@ -760,7 +760,7 @@ export default function SkillBrowseShell({
     <>
       <div className="page-header">
         <div className="page-title__row">
-          <h2 style={{ margin: 0 }}>{title}</h2>
+          <h2>{title}</h2>
           <span className="count-badge">{listedTotal}</span>
         </div>
         {subtitle ? (

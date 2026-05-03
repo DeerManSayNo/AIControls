@@ -11,6 +11,12 @@ import {
 import AddProjectNavButton from "./components/AddProjectNavButton";
 import AgentNavLinks from "./components/AgentNavLinks";
 import {
+  NavIconFolder,
+  NavIconHome,
+  NavIconLayers,
+  NavIconSettings,
+} from "./components/navIcons";
+import {
   appendProjectPath,
   pathsReferToSameDir,
   useProjectPaths,
@@ -45,12 +51,30 @@ function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="side-nav" aria-label="主导航">
-        <div className="side-nav-brand">AIControls</div>
+        <div className="side-nav-brand">
+          <div className="side-nav-brand__mark" aria-hidden>
+            <span className="side-nav-brand__mark-inner" />
+          </div>
+          <div className="side-nav-brand__text">
+            <span className="side-nav-brand__name">AIControls</span>
+            <span className="side-nav-brand__tag">控制台</span>
+          </div>
+        </div>
         <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
-          首页
+          <span className="side-nav-link__icon">
+            <NavIconHome />
+          </span>
+          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+            首页
+          </span>
         </NavLink>
         <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
-          全部
+          <span className="side-nav-link__icon">
+            <NavIconLayers />
+          </span>
+          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+            全部
+          </span>
         </NavLink>
 
         <div className="side-nav-section-label">Agent</div>
@@ -69,7 +93,10 @@ function Layout({ children }: { children: ReactNode }) {
               className={() => navClass(isCurrent)}
               title={p}
             >
-              {folderBasename(p)}
+              <span className="side-nav-link__icon">
+                <NavIconFolder />
+              </span>
+              <span className="side-nav-link__label">{folderBasename(p)}</span>
             </NavLink>
           );
         })}
@@ -81,7 +108,12 @@ function Layout({ children }: { children: ReactNode }) {
             className={({ isActive }) => navClass(isActive)}
             title="设置"
           >
-            设置
+            <span className="side-nav-link__icon">
+              <NavIconSettings />
+            </span>
+            <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+              设置
+            </span>
           </NavLink>
         </div>
       </aside>

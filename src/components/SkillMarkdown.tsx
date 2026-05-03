@@ -23,7 +23,7 @@ const codeStyle: React.CSSProperties = {
   backgroundColor: "var(--nav-item-hover)",
   borderRadius: 4,
   padding: "1px 6px",
-  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontFamily: "var(--font-mono)",
   fontSize: "0.88em",
   color: "var(--accent)",
 };
