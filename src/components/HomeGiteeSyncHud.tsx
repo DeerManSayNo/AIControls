@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { getGiteeSyncStatus, type GiteeSyncStatus } from "../api/gitee";
 
@@ -7,11 +8,6 @@ function formatCountdown(totalSec: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
 }
 
 export default function HomeGiteeSyncHud() {
@@ -33,15 +29,20 @@ export default function HomeGiteeSyncHud() {
     return () => window.clearInterval(id);
   }, []);
 
+  if (typeof document === "undefined") return null;
+
   if (st === null) {
-    return (
+    return createPortal(
       <div
         className="home-gitee-sync home-gitee-sync--muted"
         aria-live="polite"
       >
-        <div className="home-gitee-sync__title">Gitee 云备份</div>
-        <p className="home-gitee-sync__status">在桌面端打开以查看同步状态</p>
-      </div>
+        <div className="home-gitee-sync__compact-row">
+          <span className="home-gitee-sync__title">云备份</span>
+          <span className="home-gitee-sync__time">--:--</span>
+        </div>
+      </div>,
+      document.body,
     );
   }
 
@@ -49,47 +50,35 @@ export default function HomeGiteeSyncHud() {
   const overdue = remainSec < -5;
   const countdownLabel = overdue ? "检查中…" : formatCountdown(remainSec);
 
-  let statusLine = "尚无备份记录";
+  let statusLine = "未备份";
   if (st.lastMessage) {
     const ok = st.lastOk === true;
     const skip = st.lastMessage.includes("无变化");
-    const label = ok ? (skip ? "已跳过" : "成功") : "失败";
-    statusLine = `${label} · ${truncate(st.lastMessage, 80)}`;
+    statusLine = ok ? (skip ? "已同步" : "成功") : "失败";
   }
 
-  const lastAt =
-    st.lastBackupMs != null
-      ? new Date(st.lastBackupMs).toLocaleTimeString(undefined, {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      : null;
-
-  return (
+  return createPortal(
     <div
       className={`home-gitee-sync${st.connected ? "" : " home-gitee-sync--muted"}`}
       aria-live="polite"
     >
       <div className="home-gitee-sync__head">
-        <span className="home-gitee-sync__title">Gitee 云备份</span>
+        <span className="home-gitee-sync__title">云备份</span>
         <Link to="/settings" className="home-gitee-sync__link">
-          设置
+          ⚙
         </Link>
       </div>
-      <div className="home-gitee-sync__countdown">
-        <span className="home-gitee-sync__label">距下次自动检查</span>
+      <div className="home-gitee-sync__compact-row">
+        <span
+          className={`home-gitee-sync__dot${st.connected ? " home-gitee-sync__dot--ok" : ""}`}
+          aria-hidden
+        />
         <span className="home-gitee-sync__time">{countdownLabel}</span>
+        <span className="home-gitee-sync__status">
+          {st.connected ? statusLine : "未连接"}
+        </span>
       </div>
-      <p
-        className="home-gitee-sync__status"
-        title={st.lastMessage ?? undefined}
-      >
-        {st.connected ? statusLine : "未连接，请在设置中完成授权"}
-      </p>
-      {lastAt ? (
-        <p className="home-gitee-sync__meta">上次操作 {lastAt}</p>
-      ) : null}
-    </div>
+    </div>,
+    document.body,
   );
 }

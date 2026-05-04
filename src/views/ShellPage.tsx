@@ -69,6 +69,7 @@ type ProjectMenuState = { path: string; left: number; top: number };
 export default function ShellPage({ subtitle }: Props) {
   const navigate = useNavigate();
   const projectPaths = useProjectPaths();
+  const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [projectMenu, setProjectMenu] = useState<ProjectMenuState | null>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const [detectedAgents, setDetectedAgents] = useState<AgentScanResult[]>([]);
@@ -332,6 +333,15 @@ export default function ShellPage({ subtitle }: Props) {
     });
   };
 
+  const onImportGithubSkill = () => {
+    const trimmed = githubRepoUrl.trim();
+    if (!trimmed) return;
+    const normalized = /^https?:\/\//i.test(trimmed)
+      ? trimmed
+      : `https://${trimmed}`;
+    window.open(normalized, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="home-board">
       <header className="home-board-hero">
@@ -392,6 +402,46 @@ export default function ShellPage({ subtitle }: Props) {
             </article>
           );
         })}
+      </section>
+
+      <section className="home-board-github-import" aria-label="从 GitHub 导入 Skill">
+        <div className="home-board-github-import__head">
+          <span className="home-board-github-import__icon" aria-hidden>
+            <svg viewBox="0 0 24 24">
+              <path
+                fill="currentColor"
+                d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.21.68-.47v-1.65c-2.77.6-3.35-1.18-3.35-1.18-.46-1.15-1.1-1.46-1.1-1.46-.9-.62.07-.61.07-.61 1 .07 1.52 1.01 1.52 1.01.88 1.49 2.31 1.06 2.88.8.09-.63.35-1.06.63-1.3-2.21-.25-4.54-1.09-4.54-4.85 0-1.07.39-1.94 1.02-2.62-.1-.25-.44-1.27.1-2.64 0 0 .84-.26 2.75 1a9.63 9.63 0 0 1 5.02 0c1.91-1.26 2.75-1 2.75-1 .54 1.37.2 2.39.1 2.64.64.68 1.02 1.55 1.02 2.62 0 3.77-2.33 4.6-4.56 4.85.36.31.67.92.67 1.86v2.75c0 .26.18.57.69.47A10 10 0 0 0 12 2Z"
+              />
+            </svg>
+          </span>
+          <div>
+            <p className="home-board-github-import__title">从 GitHub 导入 Skill</p>
+            <p className="home-board-github-import__desc">
+              粘贴 GitHub 仓库链接，自动识别并导入 Skill 到你的库中
+            </p>
+          </div>
+        </div>
+        <div className="home-board-github-import__form">
+          <input
+            type="text"
+            value={githubRepoUrl}
+            onChange={(e) => setGithubRepoUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onImportGithubSkill();
+            }}
+            className="home-board-github-import__input"
+            placeholder="https://github.com/username/repo"
+            aria-label="GitHub 仓库链接"
+          />
+          <button
+            type="button"
+            className="home-board-github-import__button"
+            onClick={onImportGithubSkill}
+            disabled={githubRepoUrl.trim().length === 0}
+          >
+            导入 Skill
+          </button>
+        </div>
       </section>
 
       <section className="home-board-projects" aria-label="最近项目">
