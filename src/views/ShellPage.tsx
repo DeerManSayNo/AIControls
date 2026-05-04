@@ -20,6 +20,7 @@ import { bucketInventoryByAgent, inventoryAssetCount } from "../agentAssetGroupi
 import { getOpenAppForProject, setOpenAppForProject } from "../projectOpenAppStorage";
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
+import HomeGiteeSyncHud from "../components/HomeGiteeSyncHud";
 
 type Props = {
   title: string;
@@ -465,6 +466,7 @@ export default function ShellPage({ subtitle }: Props) {
           ))}
         </div>
       </section>
+      <HomeGiteeSyncHud />
       {projectMenu
         ? createPortal(
             <div

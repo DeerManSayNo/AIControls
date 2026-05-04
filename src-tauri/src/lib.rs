@@ -1,6 +1,7 @@
 //! AIControls — scan installed agents and global skills / MCP / rules.
 
 mod deepseek;
+mod gitee;
 mod prompt_library;
 mod resource_library;
 mod scan;
@@ -398,9 +399,62 @@ fn save_resource_library(
     resource_library::save_resource_library(&app, library)
 }
 
+#[tauri::command]
+fn get_gitee_settings(app: AppHandle) -> Result<storage::GiteeSettingsPublic, String> {
+    storage::get_gitee_settings_public(&app)
+}
+
+#[tauri::command]
+fn save_gitee_app(
+    app: AppHandle,
+    client_id: String,
+    client_secret: String,
+    repo_name: String,
+) -> Result<(), String> {
+    storage::save_gitee_app(&app, client_id, client_secret, repo_name)
+}
+
+#[tauri::command]
+async fn gitee_oauth_login(app: AppHandle) -> Result<String, String> {
+    gitee::oauth_login(app).await
+}
+
+/// `force` 默认 `true`：手动备份始终上传。定时任务使用 `force: false` 以在无变更时跳过。
+#[tauri::command]
+async fn gitee_backup_now(app: AppHandle, force: Option<bool>) -> Result<String, String> {
+    gitee::backup_now(app, force.unwrap_or(true)).await
+}
+
+#[tauri::command]
+fn gitee_disconnect(app: AppHandle) -> Result<(), String> {
+    gitee::disconnect(&app)
+}
+
+#[tauri::command]
+async fn gitee_restore_from_repo_url(app: AppHandle, repo_url: String) -> Result<String, String> {
+    gitee::restore_from_repo_url(app, repo_url).await
+}
+
+#[tauri::command]
+fn get_gitee_sync_status(app: AppHandle) -> Result<gitee::GiteeSyncStatusPublic, String> {
+    gitee::get_gitee_sync_status(&app)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            gitee::sync_ui_schedule_next_in_secs(300);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    gitee::sync_ui_schedule_next_in_secs(300);
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    gitee::backup_periodic_tick(handle.clone()).await;
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_detected_agents,
             get_agent_global_inventory,
@@ -422,6 +476,13 @@ pub fn run() {
             save_prompt_library,
             get_resource_library,
             save_resource_library,
+            get_gitee_settings,
+            save_gitee_app,
+            gitee_oauth_login,
+            gitee_backup_now,
+            gitee_disconnect,
+            gitee_restore_from_repo_url,
+            get_gitee_sync_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

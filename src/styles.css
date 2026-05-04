@@ -422,6 +422,88 @@ main {
   gap: 0.58rem;
 }
 
+/* 首页右下角：Gitee 定时备份倒计时与上次状态 */
+.home-gitee-sync {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right, 0px));
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  min-width: 14rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 4px 24px rgba(17, 20, 24, 0.08);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  pointer-events: auto;
+}
+
+.home-gitee-sync--muted {
+  opacity: 0.72;
+}
+
+.home-gitee-sync__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.home-gitee-sync__title {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-size: 0.8125rem;
+}
+
+.home-gitee-sync__link {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.home-gitee-sync__link:hover {
+  text-decoration: underline;
+}
+
+.home-gitee-sync__countdown {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.home-gitee-sync__label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.home-gitee-sync__time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.home-gitee-sync__status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  word-break: break-word;
+}
+
+.home-gitee-sync__meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
 .home-board-topbar {
   height: 42px;
   border: 1px solid var(--border);
