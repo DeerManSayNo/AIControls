@@ -2,6 +2,7 @@
 
 mod deepseek;
 mod gitee;
+mod github_import;
 mod prompt_library;
 mod resource_library;
 mod scan;
@@ -374,6 +375,39 @@ fn delete_skill_at_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn detect_github_repo_skills(
+    repo_url: String,
+) -> Result<github_import::GithubSkillDetectionResult, String> {
+    github_import::detect_github_repo_skills(&repo_url).await
+}
+
+#[tauri::command]
+async fn import_github_skill_to_destination(
+    repo_url: String,
+    skill_path: String,
+    dest_kind: String,
+    agent_id: String,
+    bucket_index: usize,
+    project_root: Option<String>,
+    on_conflict: Option<String>,
+) -> Result<String, String> {
+    let suffix = match on_conflict.as_deref() {
+        Some("error") => false,
+        _ => true,
+    };
+    github_import::import_github_skill_to_destination(
+        &repo_url,
+        &skill_path,
+        &dest_kind,
+        &agent_id,
+        bucket_index,
+        project_root.as_deref(),
+        suffix,
+    )
+    .await
+}
+
+#[tauri::command]
 fn get_prompt_library(app: AppHandle) -> Result<prompt_library::PromptLibraryFile, String> {
     prompt_library::load_prompt_library(&app)
 }
@@ -471,6 +505,8 @@ pub fn run() {
             get_project_latest_mtime_ms,
             copy_skill_package,
             delete_skill_at_path,
+            detect_github_repo_skills,
+            import_github_skill_to_destination,
             list_visible_project_skill_buckets,
             get_prompt_library,
             save_prompt_library,

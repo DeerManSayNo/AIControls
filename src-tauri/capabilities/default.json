@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "core:window:default",
+    "core:window:allow-set-theme",
+    "core:window:allow-theme",
     "core:webview:default",
     "dialog:allow-open"
   ]

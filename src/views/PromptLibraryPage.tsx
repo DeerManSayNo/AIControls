@@ -225,8 +225,12 @@ export default function PromptLibraryPage() {
     const outputType = newItem.outputType;
     const outputExample = newItem.outputExample.trim();
     const relatedLink = newItem.relatedLink.trim();
-    if (!title || !prompt) {
-      setToast({ kind: "error", message: "请填写标题和 Prompt" });
+    if (!title) {
+      setToast({ kind: "error", message: "请填写标题" });
+      return;
+    }
+    if (outputType !== "image" && !prompt) {
+      setToast({ kind: "error", message: "请填写 Prompt" });
       return;
     }
     const prev =
@@ -313,6 +317,23 @@ export default function PromptLibraryPage() {
       setToast({ kind: "success", message: "已复制 Prompt" });
     } catch {
       setToast({ kind: "error", message: "复制失败" });
+    }
+  }
+
+  async function copyImageDataUrl(dataUrl: string) {
+    try {
+      const blob = dataUrlToBlob(dataUrl);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ClipboardItemCtor = (window as any).ClipboardItem as
+        | (new (items: Record<string, Blob>) => ClipboardItem)
+        | undefined;
+      if (!ClipboardItemCtor || !navigator.clipboard?.write) {
+        throw new Error("clipboard image write unsupported");
+      }
+      await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type || "image/png"]: blob })]);
+      setToast({ kind: "success", message: "已复制图片" });
+    } catch {
+      setToast({ kind: "error", message: "复制图片失败" });
     }
   }
 
@@ -454,10 +475,15 @@ export default function PromptLibraryPage() {
                           className="prompt-lib__masonry-copy"
                           onClick={(e) => {
                             e.stopPropagation();
+                            const p = item.prompt.trim();
+                            if (item.type === "image" && !p && item.imageDataUrl) {
+                              void copyImageDataUrl(item.imageDataUrl);
+                              return;
+                            }
                             void copyPrompt(item.prompt);
                           }}
                         >
-                          复制 Prompt
+                          {item.type === "image" && !item.prompt.trim() ? "复制图片" : "复制 Prompt"}
                         </button>
                       </div>
                     </article>
@@ -491,7 +517,7 @@ export default function PromptLibraryPage() {
                     <p className="prompt-create-modal__subtitle">
                       {editingItemId
                         ? "修改标题、Prompt、输出类型或示例后保存。"
-                        : "保存 Prompt 与输出示例，便于复制与对照。"}
+                        : "保存输出示例与相关信息，便于复制与对照。"}
                     </p>
                   </div>
                   <button
@@ -723,12 +749,19 @@ export default function PromptLibraryPage() {
                 className="card-context-menu__item"
                 disabled={saving}
                 onClick={() => {
-                  const prompt = cardContextMenu.item.prompt;
+                  const item = cardContextMenu.item;
                   setCardContextMenu(null);
-                  void copyPrompt(prompt);
+                  const p = item.prompt.trim();
+                  if (item.type === "image" && !p && item.imageDataUrl) {
+                    void copyImageDataUrl(item.imageDataUrl);
+                    return;
+                  }
+                  void copyPrompt(item.prompt);
                 }}
               >
-                复制 Prompt
+                {cardContextMenu.item.type === "image" && !cardContextMenu.item.prompt.trim()
+                  ? "复制图片"
+                  : "复制 Prompt"}
               </button>
               {cardContextMenu.item.type !== "image" && cardContextMenu.item.outputExample?.trim() ? (
                 <button
@@ -858,6 +891,17 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("read failed"));
     reader.readAsDataURL(file);
   });
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const m = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
+  if (!m) return new Blob([dataUrl], { type: "text/plain" });
+  const mime = m[1] || "application/octet-stream";
+  const b64 = m[2] || "";
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
 }
 
 function dataUrlToImage(dataUrl: string): Promise<HTMLImageElement> {

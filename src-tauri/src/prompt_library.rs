@@ -169,7 +169,11 @@ fn validate_and_normalize(mut lib: PromptLibraryFile) -> Result<PromptLibraryFil
         if item.output_type.is_empty() {
             item.output_type = item.r#type.clone();
         }
-        if item.title.is_empty() || item.prompt.is_empty() {
+        if item.title.is_empty() {
+            return Err(format!("条目 {} 缺少必填字段", item.id));
+        }
+        // 图片类型允许 prompt 为空（用于仅收藏输出示例图片）。
+        if item.r#type != "image" && item.prompt.is_empty() {
             return Err(format!("条目 {} 缺少必填字段", item.id));
         }
         if !matches!(item.output_type.as_str(), "image" | "code" | "doc" | "text") {

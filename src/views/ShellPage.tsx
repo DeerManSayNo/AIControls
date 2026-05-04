@@ -12,15 +12,20 @@ import {
   scanProjectDirectoryCached,
 } from "../api/agentInventoryCache";
 import {
+  detectGithubRepoSkills,
+  importGithubSkillToDestination,
   listDetectedAgents,
   type AgentInventory,
   type AgentScanResult,
+  type GithubSkillCandidate,
 } from "../api/agents";
 import { bucketInventoryByAgent, inventoryAssetCount } from "../agentAssetGrouping";
 import { getOpenAppForProject, setOpenAppForProject } from "../projectOpenAppStorage";
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import HomeGiteeSyncHud from "../components/HomeGiteeSyncHud";
+import { buildCopySkillMenuSections } from "../skillCopyTargets";
+import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
 
 type Props = {
   title: string;
@@ -65,6 +70,14 @@ function appLabelFromPath(appPath: string): string {
 }
 
 type ProjectMenuState = { path: string; left: number; top: number };
+type GithubDetectedSkillsModalState = {
+  repoUrl: string;
+  skills: GithubSkillCandidate[];
+};
+type PendingGithubImport = {
+  repoUrl: string;
+  skills: GithubSkillCandidate[];
+};
 
 export default function ShellPage({ subtitle }: Props) {
   const navigate = useNavigate();
@@ -91,6 +104,19 @@ export default function ShellPage({ subtitle }: Props) {
   >({});
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [homeScanBusy, setHomeScanBusy] = useState(false);
+  const [githubImportBusy, setGithubImportBusy] = useState(false);
+  const [githubSkillPickModal, setGithubSkillPickModal] =
+    useState<GithubDetectedSkillsModalState | null>(null);
+  const [selectedGithubSkillIds, setSelectedGithubSkillIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [pendingGithubImport, setPendingGithubImport] =
+    useState<PendingGithubImport | null>(null);
+  const [homeToast, setHomeToast] = useState<{
+    at: number;
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,7 +242,7 @@ export default function ShellPage({ subtitle }: Props) {
 
   const recentProjects = useMemo(
     () =>
-      projectPaths.slice(-4).reverse().map((path) => {
+      projectPaths.slice().reverse().map((path) => {
         const stat = projectStats[path];
         const assetCount = (stat?.skills ?? 0) + (stat?.mcp ?? 0) + (stat?.rules ?? 0);
         const topAgent =
@@ -335,12 +361,137 @@ export default function ShellPage({ subtitle }: Props) {
 
   const onImportGithubSkill = () => {
     const trimmed = githubRepoUrl.trim();
-    if (!trimmed) return;
-    const normalized = /^https?:\/\//i.test(trimmed)
-      ? trimmed
-      : `https://${trimmed}`;
-    window.open(normalized, "_blank", "noopener,noreferrer");
+    if (!trimmed || githubImportBusy) return;
+    const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    void (async () => {
+      setGithubImportBusy(true);
+      const detected = await detectGithubRepoSkills(normalized);
+      setGithubImportBusy(false);
+      if ("error" in detected) {
+        window.alert(`识别失败：${detected.error}`);
+        return;
+      }
+      if (detected.skills.length === 0) {
+        window.alert("未识别到 Skill（未找到 SKILL.md）");
+        return;
+      }
+      if (detected.skills.length === 1) {
+        setPendingGithubImport({ repoUrl: normalized, skills: [detected.skills[0]!] });
+        return;
+      }
+      setSelectedGithubSkillIds(new Set());
+      setGithubSkillPickModal({ repoUrl: normalized, skills: detected.skills });
+    })();
   };
+
+  const homeCopyMenuSections = useMemo(
+    () =>
+      buildCopySkillMenuSections({
+        dataSet: "aggregate",
+        projectPaths,
+        projectRoot: undefined,
+        ecosystem: undefined,
+        agentProjectScanPaths: [],
+      }),
+    [projectPaths],
+  );
+
+  const homeImportMenuSections = useMemo(
+    () =>
+      homeCopyMenuSections.map((sec) => ({
+        ...sec,
+        title: sec.title.replace(/^复制到/, "导入到"),
+      })),
+    [homeCopyMenuSections],
+  );
+
+  const closeGithubSkillPickModal = () => setGithubSkillPickModal(null);
+
+  const toggleGithubSkillSelection = (skillId: string) => {
+    setSelectedGithubSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillId)) next.delete(skillId);
+      else next.add(skillId);
+      return next;
+    });
+  };
+
+  const proceedWithSelectedGithubSkills = () => {
+    const modal = githubSkillPickModal;
+    if (!modal) return;
+    const selected = modal.skills.filter((s) => selectedGithubSkillIds.has(s.id));
+    if (selected.length === 0) return;
+    setGithubSkillPickModal(null);
+    setPendingGithubImport({ repoUrl: modal.repoUrl, skills: selected });
+  };
+
+  const importPendingGithubSkillToDestination = (payload: {
+    destKind: "global" | "project";
+    agentId: string;
+    bucketIndex: number;
+    projectRoot?: string;
+  }) => {
+    const pending = pendingGithubImport;
+    if (!pending) return;
+    void (async () => {
+      setGithubImportBusy(true);
+      let success = 0;
+      const failed: string[] = [];
+      for (const skill of pending.skills) {
+        const result = await importGithubSkillToDestination({
+          repoUrl: pending.repoUrl,
+          skillPath: skill.path,
+          ...payload,
+          onConflict: "suffix",
+        });
+        if ("error" in result) {
+          failed.push(`${skill.title}：${result.error}`);
+          continue;
+        }
+        success += 1;
+      }
+      setGithubImportBusy(false);
+      if (success === 0) {
+        setHomeToast({
+          at: Date.now(),
+          kind: "error",
+          message: `导入失败：${failed[0] ?? "未知错误"}`,
+        });
+        return;
+      }
+      setPendingGithubImport(null);
+      setGithubRepoUrl("");
+      setHomeToast({
+        at: Date.now(),
+        kind: failed.length > 0 ? "error" : "success",
+        message:
+          failed.length > 0
+            ? `导入完成：成功 ${success} 个，失败 ${failed.length} 个`
+            : `导入成功：${success} 个 Skill`,
+      });
+    })();
+  };
+
+  useEffect(() => {
+    const hasModal = !!githubSkillPickModal || !!pendingGithubImport;
+    if (!hasModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (pendingGithubImport) {
+        setPendingGithubImport(null);
+      } else {
+        setGithubSkillPickModal(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [githubSkillPickModal, pendingGithubImport]);
+
+  useEffect(() => {
+    if (!homeToast) return;
+    const t = window.setTimeout(() => setHomeToast(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [homeToast?.at]);
 
   return (
     <div className="home-board">
@@ -437,9 +588,9 @@ export default function ShellPage({ subtitle }: Props) {
             type="button"
             className="home-board-github-import__button"
             onClick={onImportGithubSkill}
-            disabled={githubRepoUrl.trim().length === 0}
+            disabled={githubRepoUrl.trim().length === 0 || githubImportBusy}
           >
-            导入 Skill
+            {githubImportBusy ? "识别中…" : "导入 Skill"}
           </button>
         </div>
       </section>
@@ -517,6 +668,121 @@ export default function ShellPage({ subtitle }: Props) {
         </div>
       </section>
       <HomeGiteeSyncHud />
+      {githubSkillPickModal
+        ? createPortal(
+            <div className="prompt-create-modal-root">
+              <div
+                className="prompt-create-modal-backdrop"
+                onClick={closeGithubSkillPickModal}
+                aria-hidden
+              />
+              <div
+                className="prompt-create-modal home-github-skill-pick-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="home-github-skill-pick-title"
+              >
+                <header className="prompt-create-modal__header">
+                  <div className="prompt-create-modal__header-text">
+                    <h2 id="home-github-skill-pick-title" className="prompt-create-modal__title">
+                      选择要导入的 Skill
+                    </h2>
+                    <p className="prompt-create-modal__subtitle">
+                      该仓库识别到多个 Skill，请勾选需要导入的项。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="prompt-create-modal__close"
+                    onClick={closeGithubSkillPickModal}
+                    aria-label="关闭"
+                  >
+                    ✕
+                  </button>
+                </header>
+                <div className="home-github-skill-pick-modal__meta" aria-live="polite">
+                  已选择 {selectedGithubSkillIds.size} / {githubSkillPickModal.skills.length}
+                </div>
+                <div className="home-github-skill-pick-modal__list">
+                  {githubSkillPickModal.skills.map((skill) => (
+                    <button
+                      key={skill.id}
+                      type="button"
+                      className={`home-github-skill-pick-modal__item${selectedGithubSkillIds.has(skill.id) ? " is-selected" : ""}`}
+                      aria-pressed={selectedGithubSkillIds.has(skill.id)}
+                      onClick={() => toggleGithubSkillSelection(skill.id)}
+                    >
+                      <span className="home-github-skill-pick-modal__item-main">
+                        <span className="home-github-skill-pick-modal__item-title">
+                          {skill.title}
+                        </span>
+                        <span className="home-github-skill-pick-modal__item-path">
+                          {skill.path}
+                        </span>
+                      </span>
+                      <span className="home-github-skill-pick-modal__check" aria-hidden>
+                        {selectedGithubSkillIds.has(skill.id) ? "✓" : ""}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <footer className="prompt-create-modal__footer">
+                  <div className="prompt-create-modal__actions">
+                    <button
+                      type="button"
+                      className="prompt-create-modal__cancel"
+                      onClick={closeGithubSkillPickModal}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="prompt-create-modal__submit"
+                      onClick={proceedWithSelectedGithubSkills}
+                      disabled={selectedGithubSkillIds.size === 0}
+                    >
+                      下一步
+                    </button>
+                  </div>
+                </footer>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {pendingGithubImport
+        ? createPortal(
+            <SkillCopyDestinationDialog
+              row={{
+                id: `github:${pendingGithubImport.skills.map((s) => s.id).join(",")}`,
+                title:
+                  pendingGithubImport.skills.length === 1
+                    ? pendingGithubImport.skills[0]!.title
+                    : `已选 ${pendingGithubImport.skills.length} 个 Skill`,
+                sourcePath: pendingGithubImport.skills[0]?.path,
+              }}
+              sections={homeImportMenuSections}
+              dialogTitle="导入到…"
+              busy={githubImportBusy}
+              busyText={`正在导入 ${pendingGithubImport.skills.length} 个 Skill，请稍候…`}
+              onClose={() => {
+                if (!githubImportBusy) setPendingGithubImport(null);
+              }}
+              onChoose={importPendingGithubSkillToDestination}
+            />,
+            document.body,
+          )
+        : null}
+      {homeToast
+        ? createPortal(
+            <div className="toast-stack" role="status" aria-live="polite">
+              <div className={`toast ${homeToast.kind === "error" ? "toast--error" : "toast--success"}`}>
+                <span className="toast__text">{homeToast.message}</span>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       {projectMenu
         ? createPortal(
             <div

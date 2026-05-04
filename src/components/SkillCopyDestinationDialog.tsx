@@ -39,6 +39,9 @@ type Props = {
   row: SkillCopyDialogRow;
   sections: CopySkillMenuSection[];
   onClose: () => void;
+  dialogTitle?: string;
+  busy?: boolean;
+  busyText?: string;
   /** 由父层串 sourcePath 并调用复制 */
   onChoose: (payload: CopySkillTargetPayload) => void;
 };
@@ -47,6 +50,9 @@ export function SkillCopyDestinationDialog({
   row,
   sections,
   onClose,
+  dialogTitle = "复制到…",
+  busy = false,
+  busyText = "处理中…",
   onChoose,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -190,7 +196,7 @@ export function SkillCopyDestinationDialog({
       <div
         className="skill-copy-dialog-backdrop"
         aria-hidden
-        onClick={onClose}
+        onClick={busy ? undefined : onClose}
       />
       <div
         className="skill-copy-dialog skill-copy-dialog--v2"
@@ -203,16 +209,22 @@ export function SkillCopyDestinationDialog({
           className="skill-copy-dialog__close"
           aria-label="关闭"
           onClick={onClose}
+          disabled={busy}
         >
           ✕
         </button>
         <div className="skill-copy-dialog__header skill-copy-dialog__header--v2">
           <h2 id="skill-copy-dialog-title" className="skill-copy-dialog__title">
-            复制到…
+            {dialogTitle}
           </h2>
           <p className="skill-copy-dialog__subtitle">
             「{row.title}」
           </p>
+          {busy ? (
+            <p className="muted" role="status" aria-live="polite" style={{ margin: "0.25rem 0 0" }}>
+              {busyText}
+            </p>
+          ) : null}
           <div className="skill-copy-dialog__toolbar">
             <input
               type="search"
@@ -222,6 +234,7 @@ export function SkillCopyDestinationDialog({
               onChange={(e) => setQuery(e.target.value)}
               aria-label="筛选复制目标"
               autoComplete="off"
+              disabled={busy}
             />
             {showTabs ? (
               <div className="seg skill-copy-dialog__seg" role="tablist" aria-label="目标范围">
@@ -231,6 +244,7 @@ export function SkillCopyDestinationDialog({
                   aria-selected={tab === "global"}
                   className={`seg__item${tab === "global" ? " active" : ""}`}
                   onClick={() => setTab("global")}
+                  disabled={busy}
                 >
                   用户全局
                   <span className="skill-copy-dialog__tab-badge">{globalItemCount}</span>
@@ -241,6 +255,7 @@ export function SkillCopyDestinationDialog({
                   aria-selected={tab === "projects"}
                   className={`seg__item${tab === "projects" ? " active" : ""}`}
                   onClick={() => setTab("projects")}
+                  disabled={busy}
                 >
                   项目
                   <span className="skill-copy-dialog__tab-badge">{projectSections.length}</span>
@@ -280,6 +295,7 @@ export function SkillCopyDestinationDialog({
                               key={it.id}
                               type="button"
                               className="skill-copy-dialog__tile"
+                              disabled={busy}
                               onClick={() => onChoose(it.payload)}
                             >
                               {it.label}
@@ -324,6 +340,7 @@ export function SkillCopyDestinationDialog({
                               className="skill-copy-dialog__project-trigger"
                               aria-expanded={expanded}
                               onClick={() => toggleProject(sec.key)}
+                              disabled={busy}
                             >
                               <span
                                 className="skill-copy-dialog__project-chevron"
@@ -364,6 +381,7 @@ export function SkillCopyDestinationDialog({
                                         key={it.id}
                                         type="button"
                                         className="skill-copy-dialog__tile"
+                                        disabled={busy}
                                         onClick={() => onChoose(it.payload)}
                                       >
                                         {it.label}

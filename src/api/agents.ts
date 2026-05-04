@@ -89,6 +89,20 @@ export type CopySkillPackageInput = {
   onConflict?: "suffix" | "error";
 };
 
+export type GithubSkillCandidate = {
+  id: string;
+  path: string;
+  title: string;
+};
+
+export type GithubSkillDetectionResult = {
+  owner: string;
+  repo: string;
+  branch: string;
+  basePath?: string | null;
+  skills: GithubSkillCandidate[];
+};
+
 function formatInvokeError(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;
@@ -116,6 +130,48 @@ export async function copySkillPackage(
   try {
     const path = await invoke<string>("copy_skill_package", {
       sourcePath: input.sourcePath,
+      destKind: input.destKind,
+      agentId: input.agentId,
+      bucketIndex: input.bucketIndex,
+      projectRoot: input.projectRoot ?? null,
+      onConflict: input.onConflict ?? "suffix",
+    });
+    return { path };
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+export async function detectGithubRepoSkills(
+  repoUrl: string,
+): Promise<GithubSkillDetectionResult | { error: string }> {
+  try {
+    const data = await invoke<GithubSkillDetectionResult>("detect_github_repo_skills", {
+      repoUrl,
+    });
+    return data;
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+export type ImportGithubSkillInput = {
+  repoUrl: string;
+  skillPath: string;
+  destKind: "global" | "project";
+  agentId: string;
+  bucketIndex: number;
+  projectRoot?: string;
+  onConflict?: "suffix" | "error";
+};
+
+export async function importGithubSkillToDestination(
+  input: ImportGithubSkillInput,
+): Promise<{ path: string } | { error: string }> {
+  try {
+    const path = await invoke<string>("import_github_skill_to_destination", {
+      repoUrl: input.repoUrl,
+      skillPath: input.skillPath,
       destKind: input.destKind,
       agentId: input.agentId,
       bucketIndex: input.bucketIndex,
