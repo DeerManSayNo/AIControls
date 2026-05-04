@@ -1,3 +1,3 @@
 {
-  "releaseNotes": "- feat: 首页指标卡片支持跳转到「全部」并带 kind 筛选；最近项目角标显示打开应用（未设置默认 VS Code）。\n- feat: 首页项目支持显示目录下最新修改时间（Tauri 递归扫描 + 会话缓存）。\n- chore: 新增 brainstorming skill（含本地脚本与可视化说明）。"
+  "releaseNotes": "- feat: 新增 GitHub 导入能力与相关入口（Tauri 侧实现）。\n- feat: 完善提示词库页面交互与样式，提升导入/复制等操作体验。\n- chore: 补齐相关 API 与界面联动（含 Shell/首页 HUD 等）。"
 }
