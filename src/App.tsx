@@ -56,61 +56,71 @@ function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="side-nav" aria-label="主导航">
-        <div className="side-nav-brand">
-          <div className="side-nav-brand__mark" aria-hidden>
-            <BrandLogo />
+        <div className="side-nav__primary">
+          <div className="side-nav-brand">
+            <div className="side-nav-brand__mark" aria-hidden>
+              <BrandLogo />
+            </div>
+            <div className="side-nav-brand__text">
+              <span className="side-nav-brand__name">AIControls</span>
+              <span className="side-nav-brand__tag">控制台</span>
+            </div>
           </div>
-          <div className="side-nav-brand__text">
-            <span className="side-nav-brand__name">AIControls</span>
-            <span className="side-nav-brand__tag">控制台</span>
-          </div>
+          <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
+            <span className="side-nav-link__icon">
+              <NavIconHome />
+            </span>
+            <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+              首页
+            </span>
+          </NavLink>
+          <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
+            <span className="side-nav-link__icon">
+              <NavIconLayers />
+            </span>
+            <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+              全部
+            </span>
+          </NavLink>
+          <NavLink to="/prompts" className={({ isActive }) => navClass(isActive)}>
+            <span className="side-nav-link__icon">
+              <NavIconPrompt />
+            </span>
+            <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+              Prompt 库
+            </span>
+          </NavLink>
+          <NavLink
+            to="/resources"
+            className={({ isActive }) => navClass(isActive)}
+          >
+            <span className="side-nav-link__icon">
+              <NavIconFolder />
+            </span>
+            <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+              资源库
+            </span>
+          </NavLink>
+
+          <div className="side-nav-section-label">Agent</div>
+          <AgentNavLinks />
         </div>
-        <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
-          <span className="side-nav-link__icon">
-            <NavIconHome />
-          </span>
-          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-            首页
-          </span>
-        </NavLink>
-        <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
-          <span className="side-nav-link__icon">
-            <NavIconLayers />
-          </span>
-          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-            全部
-          </span>
-        </NavLink>
-        <NavLink to="/prompts" className={({ isActive }) => navClass(isActive)}>
-          <span className="side-nav-link__icon">
-            <NavIconPrompt />
-          </span>
-          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-            Prompt 库
-          </span>
-        </NavLink>
-        <NavLink to="/resources" className={({ isActive }) => navClass(isActive)}>
-          <span className="side-nav-link__icon">
-            <NavIconFolder />
-          </span>
-          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-            资源库
-          </span>
-        </NavLink>
 
-        <div className="side-nav-section-label">Agent</div>
-        <AgentNavLinks />
-
-        <div className="side-nav-section-label">全部项目</div>
-        {projectPaths.map((p) => {
-          const isCurrent =
-            activeProjectPath !== null &&
-            pathsReferToSameDir(activeProjectPath, p);
-          return (
-            <ProjectNavItem key={p} projectPath={p} isCurrent={isCurrent} />
-          );
-        })}
-        <AddProjectNavButton />
+        <div
+          className="side-nav__projects-scroll"
+          aria-label="项目列表"
+        >
+          <div className="side-nav-section-label">全部项目</div>
+          {projectPaths.map((p) => {
+            const isCurrent =
+              activeProjectPath !== null &&
+              pathsReferToSameDir(activeProjectPath, p);
+            return (
+              <ProjectNavItem key={p} projectPath={p} isCurrent={isCurrent} />
+            );
+          })}
+          <AddProjectNavButton />
+        </div>
 
         <div className="side-nav-footer">
           <NavLink

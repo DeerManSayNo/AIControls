@@ -2,6 +2,7 @@
 
 mod deepseek;
 mod prompt_library;
+mod resource_library;
 mod scan;
 mod skill_copy;
 mod storage;
@@ -128,6 +129,14 @@ async fn deepseek_summarize_inventory(
     inventory: AgentInventory,
 ) -> Result<AgentInventory, String> {
     deepseek::summarize_inventory_missing(&app, inventory).await
+}
+
+#[tauri::command]
+async fn deepseek_enrich_resource_url(
+    app: AppHandle,
+    url: String,
+) -> Result<deepseek::ResourceUrlEnrichment, String> {
+    deepseek::enrich_resource_from_url(&app, url).await
 }
 
 /// 在系统文件管理器中打开路径：文件则打开其所在文件夹并选中；文件夹则打开该文件夹。
@@ -376,6 +385,19 @@ fn save_prompt_library(
     prompt_library::save_prompt_library(&app, library)
 }
 
+#[tauri::command]
+fn get_resource_library(app: AppHandle) -> Result<resource_library::ResourceLibraryFile, String> {
+    resource_library::load_resource_library(&app)
+}
+
+#[tauri::command]
+fn save_resource_library(
+    app: AppHandle,
+    library: resource_library::ResourceLibraryFile,
+) -> Result<(), String> {
+    resource_library::save_resource_library(&app, library)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -389,6 +411,7 @@ pub fn run() {
             test_deepseek_connection,
             deepseek_classify_inventory,
             deepseek_summarize_inventory,
+            deepseek_enrich_resource_url,
             reveal_path_in_folder,
             open_project_path,
             get_project_latest_mtime_ms,
@@ -397,6 +420,8 @@ pub fn run() {
             list_visible_project_skill_buckets,
             get_prompt_library,
             save_prompt_library,
+            get_resource_library,
+            save_resource_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

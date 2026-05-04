@@ -2,7 +2,7 @@
 
 use crate::scan::{attach_briefs, attach_scenarios, AgentInventory, AssetEntry};
 use crate::storage;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -372,4 +372,101 @@ pub async fn summarize_inventory_missing(
     }
 
     Ok(inventory)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceUrlEnrichment {
+    pub title: String,
+    pub tags: Vec<String>,
+    pub note: String,
+}
+
+fn normalize_enrichment_tags(raw: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for t in raw {
+        let t = t.trim().to_string();
+        if t.is_empty() {
+            continue;
+        }
+        let key = t.to_lowercase();
+        if seen.insert(key) {
+            out.push(t);
+        }
+        if out.len() >= 12 {
+            break;
+        }
+    }
+    out
+}
+
+fn resource_url_system_prompt() -> String {
+    r#"你是资源库助手。根据用户给出的网页链接，推断该资源的简短中文标题、标签与用途备注。
+规则：
+1) title：准确概括站点或页面主题，尽量简短（通常不超过 20 字）；
+2) tags：3 到 8 个标签，可用简短中文或英文小写词，去重、勿重复含义；
+3) note：1 至 3 句中文，说明适用场景、何时使用或注意事项；不要复述完整 URL；
+4) 若仅凭域名与路径难以确定具体内容，可依据常见站点类型合理推断，并在 note 末尾用括号标注「推测」。
+
+只输出一个 JSON 对象，字段：title（字符串）、tags（字符串数组）、note（字符串）。不要 Markdown，不要其他字段。"#
+        .to_string()
+}
+
+/// 根据链接文本调用 DeepSeek 生成标题、标签与备注（需已配置 API Key）。
+pub async fn enrich_resource_from_url(
+    app: &AppHandle,
+    url: String,
+) -> Result<ResourceUrlEnrichment, String> {
+    let api_key = storage::load_deepseek_api_key(app)?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("链接为空".into());
+    }
+
+    let user = format!("链接：{}", serde_json::to_string(&url).map_err(|e| e.to_string())?);
+    let raw = chat_completion(
+        &api_key,
+        &resource_url_system_prompt(),
+        &user,
+        true,
+        600,
+    )
+    .await?;
+    let v = extract_json_object(&raw)?;
+
+    let title = v
+        .get("title")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "模型未返回 title".to_string())?
+        .to_string();
+
+    let tags_arr = v
+        .get("tags")
+        .and_then(|x| x.as_array())
+        .ok_or_else(|| "模型未返回 tags 数组".to_string())?;
+
+    let mut tag_strings = Vec::new();
+    for t in tags_arr {
+        if let Some(s) = t.as_str() {
+            tag_strings.push(s.to_string());
+        } else if let Some(n) = t.as_f64() {
+            tag_strings.push((n as i64).to_string());
+        }
+    }
+    let tags = normalize_enrichment_tags(tag_strings);
+
+    let note = v
+        .get("note")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    Ok(ResourceUrlEnrichment { title, tags, note })
 }

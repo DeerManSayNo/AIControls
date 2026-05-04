@@ -59,3 +59,14 @@ export async function deepseekSummarizeInventory(
     return null;
   }
 }
+
+export type ResourceUrlEnrichment = {
+  title: string;
+  tags: string[];
+  note: string;
+};
+
+/** 根据链接由 DeepSeek 生成标题、标签与用途备注（需已在设置中配置 API Key）。 */
+export async function deepseekEnrichResourceUrl(url: string): Promise<ResourceUrlEnrichment> {
+  return invoke<ResourceUrlEnrichment>("deepseek_enrich_resource_url", { url });
+}
