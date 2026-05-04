@@ -34,6 +34,15 @@ export function NavIconLayers({ className, ...props }: IconProps) {
   );
 }
 
+export function NavIconPrompt({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={["nav-icon--nudge-1", className].filter(Boolean).join(" ")}>
+      <path d="M4 5h16v12H7l-3 3V5z" />
+      <path d="M8 9h8M8 13h5" />
+    </svg>
+  );
+}
+
 export function NavIconBot(props: IconProps) {
   return (
     <svg {...base} {...props}>

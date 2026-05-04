@@ -1,6 +1,7 @@
 //! AIControls — scan installed agents and global skills / MCP / rules.
 
 mod deepseek;
+mod prompt_library;
 mod scan;
 mod skill_copy;
 mod storage;
@@ -362,6 +363,19 @@ fn delete_skill_at_path(path: String) -> Result<(), String> {
     skill_copy::perform_delete_skill(&path)
 }
 
+#[tauri::command]
+fn get_prompt_library(app: AppHandle) -> Result<prompt_library::PromptLibraryFile, String> {
+    prompt_library::load_prompt_library(&app)
+}
+
+#[tauri::command]
+fn save_prompt_library(
+    app: AppHandle,
+    library: prompt_library::PromptLibraryFile,
+) -> Result<(), String> {
+    prompt_library::save_prompt_library(&app, library)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -381,6 +395,8 @@ pub fn run() {
             copy_skill_package,
             delete_skill_at_path,
             list_visible_project_skill_buckets,
+            get_prompt_library,
+            save_prompt_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -15,6 +15,8 @@ import ProjectNavItem from "./components/ProjectNavItem";
 import {
   NavIconHome,
   NavIconLayers,
+  NavIconFolder,
+  NavIconPrompt,
   NavIconSettings,
 } from "./components/navIcons";
 import {
@@ -25,6 +27,8 @@ import {
 import ShellPage from "./views/ShellPage";
 import SettingsPage from "./views/SettingsPage";
 import SkillBrowseShell from "./views/SkillBrowseShell";
+import PromptLibraryPage from "./views/PromptLibraryPage";
+import ResourceLibraryPage from "./views/ResourceLibraryPage";
 
 function navClass(active: boolean) {
   return `side-nav-link${active ? " active" : ""}`;
@@ -75,6 +79,22 @@ function Layout({ children }: { children: ReactNode }) {
           </span>
           <span className="side-nav-link__label side-nav-link__label--cjk-optical">
             全部
+          </span>
+        </NavLink>
+        <NavLink to="/prompts" className={({ isActive }) => navClass(isActive)}>
+          <span className="side-nav-link__icon">
+            <NavIconPrompt />
+          </span>
+          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+            Prompt 库
+          </span>
+        </NavLink>
+        <NavLink to="/resources" className={({ isActive }) => navClass(isActive)}>
+          <span className="side-nav-link__icon">
+            <NavIconFolder />
+          </span>
+          <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+            资源库
           </span>
         </NavLink>
 
@@ -160,6 +180,8 @@ export default function App() {
           element={<SkillBrowseShell title="全部" dataSet="aggregate" />}
         />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/prompts" element={<PromptLibraryPage />} />
+        <Route path="/resources" element={<ResourceLibraryPage />} />
         <Route path="/agent/:ecosystem" element={<AgentRoute />} />
         <Route path="/project" element={<ProjectRoute />} />
       </Routes>
