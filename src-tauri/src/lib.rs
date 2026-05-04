@@ -73,26 +73,34 @@ fn list_detected_agents() -> Vec<scan::AgentScanResult> {
 }
 
 #[tauri::command]
-fn get_agent_global_inventory(
+async fn get_agent_global_inventory(
     app: AppHandle,
     agent_id: String,
 ) -> Result<AgentInventory, String> {
-    let mut inv = scan::global_inventory(&agent_id)?;
-    let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
-    scan::attach_scenarios(&mut inv, &scenario_map);
-    let brief_map = storage::load_brief_map(&app).unwrap_or_default();
-    scan::attach_briefs(&mut inv, &brief_map);
-    Ok(inv)
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut inv = scan::global_inventory(&agent_id)?;
+        let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
+        scan::attach_scenarios(&mut inv, &scenario_map);
+        let brief_map = storage::load_brief_map(&app).unwrap_or_default();
+        scan::attach_briefs(&mut inv, &brief_map);
+        Ok(inv)
+    })
+    .await
+    .map_err(|e| format!("扫描任务失败: {e}"))?
 }
 
 #[tauri::command]
-fn scan_project_directory(app: AppHandle, root: String) -> Result<AgentInventory, String> {
-    let mut inv = scan::scan_project_directory(std::path::Path::new(&root))?;
-    let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
-    scan::attach_scenarios(&mut inv, &scenario_map);
-    let brief_map = storage::load_brief_map(&app).unwrap_or_default();
-    scan::attach_briefs(&mut inv, &brief_map);
-    Ok(inv)
+async fn scan_project_directory(app: AppHandle, root: String) -> Result<AgentInventory, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut inv = scan::scan_project_directory(std::path::Path::new(&root))?;
+        let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
+        scan::attach_scenarios(&mut inv, &scenario_map);
+        let brief_map = storage::load_brief_map(&app).unwrap_or_default();
+        scan::attach_briefs(&mut inv, &brief_map);
+        Ok(inv)
+    })
+    .await
+    .map_err(|e| format!("扫描任务失败: {e}"))?
 }
 
 #[tauri::command]
@@ -334,8 +342,12 @@ fn open_project_path(path: String, application_path: Option<String>) -> Result<(
 
 /// 递归扫描目录，返回目录下（含子文件/子目录）的最新修改时间（Unix 毫秒）。
 #[tauri::command]
-fn get_project_latest_mtime_ms(root: String) -> Result<i64, String> {
-    latest_file_mtime_in_dir(std::path::Path::new(root.trim()))
+async fn get_project_latest_mtime_ms(root: String) -> Result<i64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        latest_file_mtime_in_dir(std::path::Path::new(root.trim()))
+    })
+    .await
+    .map_err(|e| format!("扫描任务失败: {e}"))?
 }
 
 #[tauri::command]
