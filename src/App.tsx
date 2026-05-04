@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import {
   NavLink,
@@ -54,7 +54,6 @@ function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const pathFromUrl = searchParams.get("path");
   const projectPaths = useProjectPaths();
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [agentsCollapsed, setAgentsCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return readBoolFromLocalStorage("aicontrols-nav-collapse-agents", false);
@@ -65,29 +64,9 @@ function Layout({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const savedTheme = window.localStorage.getItem("aicontrols-theme");
-    if (savedTheme === "light" || savedTheme === "dark") {
-      setTheme(savedTheme);
-      return;
-    }
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    setTheme(prefersDark ? "dark" : "light");
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.colorScheme = "light";
   }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    window.localStorage.setItem("aicontrols-theme", theme);
-
-    // Sync native Tauri title bar appearance with the web theme.
-    import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(theme))
-      .catch((err) => {
-        // Running in browser/dev preview without Tauri window API or missing permission.
-        console.warn("[theme] failed to sync native window theme", err);
-      });
-  }, [theme]);
 
   useEffect(() => {
     if (pathFromUrl) {
@@ -97,12 +76,6 @@ function Layout({ children }: { children: ReactNode }) {
 
   const activeProjectPath =
     pathname === "/project" ? searchParams.get("path") : null;
-
-  function onThemeToggleClick(e: MouseEvent<HTMLButtonElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  }
 
   return (
     <div className="app-shell">
@@ -237,42 +210,6 @@ function Layout({ children }: { children: ReactNode }) {
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
               设置
             </span>
-            <button
-              type="button"
-              className="side-nav-theme-toggle"
-              aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
-              title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
-              onClick={onThemeToggleClick}
-            >
-              <span className="side-nav-theme-toggle__sun">
-                <svg viewBox="0 0 16 16" fill="none">
-                  <circle cx="8" cy="8" r="2.4" />
-                  <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" />
-                </svg>
-              </span>
-              <span className="side-nav-theme-toggle__thumb">
-                <svg
-                  className="side-nav-theme-toggle__thumb-sun"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                >
-                  <circle cx="8" cy="8" r="2.5" />
-                  <path d="M8 1.8v1.5M8 12.7v1.5M1.8 8h1.5M12.7 8h1.5M3.7 3.7l1 1M11.3 11.3l1 1M12.3 3.7l-1 1M4.7 11.3l-1 1" />
-                </svg>
-                <svg
-                  className="side-nav-theme-toggle__thumb-moon"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                >
-                  <path d="M10.7 2.4A5.6 5.6 0 1 0 13.4 13a4.8 4.8 0 0 1-2.7-10.6Z" />
-                </svg>
-              </span>
-              <span className="side-nav-theme-toggle__moon">
-                <svg viewBox="0 0 16 16" fill="none">
-                  <path d="M10.9 2.3a5.8 5.8 0 1 0 2.8 10.9A5 5 0 0 1 10.9 2.3Z" />
-                </svg>
-              </span>
-            </button>
           </NavLink>
         </div>
       </aside>
