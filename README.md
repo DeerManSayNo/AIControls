@@ -25,7 +25,11 @@
 ## Product Preview
 
 <p align="center">
-  <img src="PixPin_2026-05-05_15-18-27.png" alt="AIControls desktop dashboard" width="960" />
+  <img src="image.png" alt="AIControls desktop dashboard in English" width="960" />
+</p>
+
+<p align="center">
+  <img src="PixPin_2026-05-05_15-18-27.png" alt="AIControls desktop dashboard in Chinese" width="960" />
 </p>
 
 首页会把本机 Agent、项目、Skills、MCP、Rules 汇总成一张工作台视图。左侧是 Agent 与项目导航，中间可以查看当前资产统计、从 GitHub 仓库导入 Skill，并快速进入最近项目。
