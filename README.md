@@ -1,7 +1,7 @@
 # AIControls - Local Agent Control Center
 
 <p align="center">
-  <img src="public/AIControlLogo.png" alt="AIControls" width="220" />
+  <img src="ChatGPT%20Image%202026年5月5日%2010_15_09%201.png" alt="AIControls" width="220" />
 </p>
 
 <p align="center">
