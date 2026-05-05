@@ -4,6 +4,7 @@ set -euo pipefail
 branch="open-source"
 primary_remote="origin"
 github_remote_url="https://github.com/DeerManSayNo/AIControls.git"
+github_http_proxy="${GITHUB_HTTP_PROXY:-http://127.0.0.1:7897}"
 push_remotes=("origin" "github")
 
 push_branch() {
@@ -16,7 +17,11 @@ push_branch() {
       echo "Remote '${remote_name}' not configured; skipping." >&2
       continue
     fi
-    git push -u "${remote_name}" "${branch}"
+    if [[ "${remote_name}" == "github" ]]; then
+      git -c http.proxy="${github_http_proxy}" push -u "${remote_name}" "${branch}"
+    else
+      git push -u "${remote_name}" "${branch}"
+    fi
   done
 }
 

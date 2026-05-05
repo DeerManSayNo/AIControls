@@ -14,6 +14,7 @@ disable-model-invocation: true
 - 推送到 `origin/open-source`
 - 同步推送到 GitHub 远端 `github/open-source`（`https://github.com/DeerManSayNo/AIControls.git`）
   - 若本地尚未配置 `github` 远端，脚本会自动添加该远端
+  - GitHub 推送默认通过本地代理 `http://127.0.0.1:7897`；可用 `GITHUB_HTTP_PROXY` 覆盖
 
 ## 执行
 在仓库根目录运行：
