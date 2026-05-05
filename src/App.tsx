@@ -157,12 +157,12 @@ function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <div
-          className={`side-nav__projects-scroll${projectsCollapsed ? " side-nav__projects-scroll--collapsed" : ""}`}
+          className={`side-nav__projects${projectsCollapsed ? " side-nav__projects--collapsed" : ""}`}
           aria-label="项目列表"
         >
           <button
             type="button"
-            className="side-nav-section-toggle"
+            className="side-nav-section-toggle side-nav__projects-heading"
             aria-expanded={!projectsCollapsed}
             aria-controls="side-nav-projects"
             onClick={() => {
@@ -185,7 +185,11 @@ function Layout({ children }: { children: ReactNode }) {
               ▾
             </span>
           </button>
-          <div id="side-nav-projects" hidden={projectsCollapsed}>
+          <div
+            id="side-nav-projects"
+            className="side-nav__projects-list"
+            hidden={projectsCollapsed}
+          >
             {projectPaths.map((p) => {
               const isCurrent =
                 activeProjectPath !== null &&

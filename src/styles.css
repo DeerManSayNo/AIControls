@@ -53,11 +53,27 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
   letter-spacing: 0.01em;
+}
+
+#root {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .home-hello,
@@ -81,10 +97,12 @@ a:hover {
 }
 
 .app-shell {
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: row;
   align-items: stretch;
+  overscroll-behavior: none;
 }
 
 .side-nav {
@@ -96,8 +114,8 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 0.04rem;
-  height: 100vh;
   min-height: 0;
+  align-self: stretch;
   position: sticky;
   top: 0;
   overflow: hidden;
@@ -108,7 +126,24 @@ a:hover {
   flex-shrink: 0;
 }
 
-.side-nav__projects-scroll {
+.side-nav__projects {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.side-nav__projects--collapsed {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+.side-nav__projects-heading {
+  flex-shrink: 0;
+}
+
+.side-nav__projects-list {
   flex: 1 1 0;
   min-height: 0;
   overflow-x: hidden;
@@ -118,13 +153,7 @@ a:hover {
   -ms-overflow-style: none;
 }
 
-.side-nav__projects-scroll--collapsed {
-  flex: 0 0 auto;
-  min-height: auto;
-  overflow: hidden;
-}
-
-.side-nav__projects-scroll::-webkit-scrollbar {
+.side-nav__projects-list::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
@@ -366,12 +395,13 @@ a:hover {
 .main-wrap {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg);
   background-image: var(--main-shine);
-  height: 100vh;
   overflow: auto;
+  overscroll-behavior: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
   position: relative;
