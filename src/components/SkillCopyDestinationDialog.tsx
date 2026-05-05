@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { listVisibleProjectSkillBuckets } from "../api/agents";
+import { useI18n } from "../i18n/provider";
 import { normalizeProjectPath } from "../projectPathsStorage";
 import type {
   CopySkillMenuSection,
@@ -20,7 +21,7 @@ export type SkillCopyDialogRow = {
 };
 
 function folderBasename(path: string): string {
-  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "Project";
 }
 
 function projectPathFromKey(key: string): string | null {
@@ -50,11 +51,12 @@ export function SkillCopyDestinationDialog({
   row,
   sections,
   onClose,
-  dialogTitle = "复制到…",
+  dialogTitle = "Copy to…",
   busy = false,
-  busyText = "处理中…",
+  busyText = "Processing…",
   onChoose,
 }: Props) {
+  const { locale } = useI18n();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"global" | "projects">("global");
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -207,7 +209,7 @@ export function SkillCopyDestinationDialog({
         <button
           type="button"
           className="skill-copy-dialog__close"
-          aria-label="关闭"
+          aria-label={locale === "zh" ? "关闭" : "Close"}
           onClick={onClose}
           disabled={busy}
         >
@@ -229,7 +231,11 @@ export function SkillCopyDestinationDialog({
             <input
               type="search"
               className="skill-copy-dialog__search"
-              placeholder="搜索文件夹名、路径或目标类型…"
+              placeholder={
+                locale === "zh"
+                  ? "搜索文件夹名、路径或目标类型…"
+                  : "Search folder, path, or target type…"
+              }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="筛选复制目标"

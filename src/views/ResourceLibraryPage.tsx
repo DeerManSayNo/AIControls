@@ -8,6 +8,7 @@ import {
   type ResourceItem,
   type ResourceLibraryFile,
 } from "../api/resources";
+import { useI18n } from "../i18n/provider";
 
 type Toast = { message: string; kind: "success" | "error" };
 
@@ -70,6 +71,7 @@ function normalizeStoredUrl(url: string): string {
 }
 
 export default function ResourceLibraryPage() {
+  const { locale } = useI18n();
   const location = useLocation();
   const [library, setLibrary] = useState<ResourceLibraryFile>(emptyLibrary());
   const [loading, setLoading] = useState(true);
@@ -254,7 +256,7 @@ export default function ResourceLibraryPage() {
     const base = libraryRef.current;
     const next = { ...base, items: [item, ...base.items] };
     await persist(next);
-    setToast({ kind: "success", message: "已从链接添加资源" });
+    setToast({ kind: "success", message: locale === "zh" ? "已从链接添加资源" : "Resource added from URL" });
   }
 
   async function tryQuickAddFromText(raw: string) {
@@ -262,7 +264,10 @@ export default function ResourceLibraryPage() {
     if (!urlRaw) {
       setToast({
         kind: "error",
-        message: "未识别为链接，请粘贴 http(s) 地址或可解析的域名",
+        message:
+          locale === "zh"
+            ? "未识别为链接，请粘贴 http(s) 地址或可解析的域名"
+            : "No URL recognized. Paste an http(s) URL or resolvable domain.",
       });
       return;
     }
@@ -284,7 +289,7 @@ export default function ResourceLibraryPage() {
     const tags = parseTagsInput(draft.tagsInput);
     const note = draft.note.trim();
     if (!title) {
-      setToast({ kind: "error", message: "请填写标题" });
+      setToast({ kind: "error", message: locale === "zh" ? "请填写标题" : "Please enter a title" });
       return;
     }
     const now = Date.now();
@@ -293,7 +298,7 @@ export default function ResourceLibraryPage() {
     if (editingItemId !== null) {
       const prev = library.items.find((x) => x.id === editingItemId);
       if (!prev) {
-        setToast({ kind: "error", message: "条目不存在或已删除" });
+        setToast({ kind: "error", message: locale === "zh" ? "条目不存在或已删除" : "Item does not exist or was deleted" });
         closeEditor();
         return;
       }
@@ -312,7 +317,7 @@ export default function ResourceLibraryPage() {
       };
       await persist(next);
       closeEditor();
-      setToast({ kind: "success", message: "已保存修改" });
+      setToast({ kind: "success", message: locale === "zh" ? "已保存修改" : "Changes saved" });
       return;
     }
 
@@ -329,13 +334,13 @@ export default function ResourceLibraryPage() {
     const next = { ...library, items: [item, ...library.items] };
     await persist(next);
     closeEditor();
-    setToast({ kind: "success", message: "已保存" });
+    setToast({ kind: "success", message: locale === "zh" ? "已保存" : "Saved" });
   }
 
   async function onDeleteItem(id: string) {
     const next = { ...library, items: library.items.filter((x) => x.id !== id) };
     await persist(next);
-    setToast({ kind: "success", message: "已删除" });
+    setToast({ kind: "success", message: locale === "zh" ? "已删除" : "Deleted" });
   }
 
   async function togglePin(item: ResourceItem) {
@@ -349,7 +354,13 @@ export default function ResourceLibraryPage() {
     await persist(next);
     setToast({
       kind: "success",
-      message: item.pinned ? "已取消置顶" : "已置顶",
+      message: item.pinned
+        ? locale === "zh"
+          ? "已取消置顶"
+          : "Unpinned"
+        : locale === "zh"
+          ? "已置顶"
+          : "Pinned",
     });
   }
 
@@ -358,7 +369,7 @@ export default function ResourceLibraryPage() {
       await navigator.clipboard.writeText(text);
       setToast({ kind: "success", message: okMsg });
     } catch {
-      setToast({ kind: "error", message: "复制失败" });
+      setToast({ kind: "error", message: locale === "zh" ? "复制失败" : "Copy failed" });
     }
   }
 
@@ -366,7 +377,16 @@ export default function ResourceLibraryPage() {
     const url = (item.url ?? "").trim();
     const hasUrl = url.length > 0;
     const toCopy = hasUrl ? url : item.title;
-    void copyText(toCopy, hasUrl ? "已复制链接" : "已复制标题");
+    void copyText(
+      toCopy,
+      hasUrl
+        ? locale === "zh"
+          ? "已复制链接"
+          : "URL copied"
+        : locale === "zh"
+          ? "已复制标题"
+          : "Title copied",
+    );
   }
 
   function onCardContextMenu(e: React.MouseEvent, item: ResourceItem) {
@@ -382,18 +402,18 @@ export default function ResourceLibraryPage() {
     setCardContextMenu({ x, y, item });
   }
 
-  if (loading) return <p className="muted">正在加载资源库…</p>;
+  if (loading) return <p className="muted">{locale === "zh" ? "正在加载资源库…" : "Loading resource library…"}</p>;
 
   return (
     <div className="resource-lib">
       <div className="page-header">
         <div className="page-header__title-bar">
           <div className="page-title__row">
-            <h2>资源库</h2>
+            <h2>{locale === "zh" ? "资源库" : "Resource Library"}</h2>
             <span className="count-badge">{library.items.length}</span>
           </div>
           <button type="button" onClick={openCreate} disabled={saving}>
-            + 新建资源
+            {locale === "zh" ? "+ 新建资源" : "+ New Resource"}
           </button>
         </div>
       </div>
@@ -416,16 +436,22 @@ export default function ResourceLibraryPage() {
               className="search__input"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索标题、链接、标签、备注"
+              placeholder={locale === "zh" ? "搜索标题、链接、标签、备注" : "Search title, URL, tags, notes"}
             />
           </label>
         </div>
       </div>
 
-      <section className="resource-lib__list-wrap" aria-label="资源列表">
+      <section className="resource-lib__list-wrap" aria-label={locale === "zh" ? "资源列表" : "Resource list"}>
         {filteredItems.length === 0 ? (
           <p className="muted">
-            {library.items.length === 0 ? "暂无资源，点击「新建资源」添加。" : "没有符合搜索条件的资源。"}
+            {library.items.length === 0
+              ? locale === "zh"
+                ? "暂无资源，点击「新建资源」添加。"
+                : "No resources yet. Click \"New Resource\"."
+              : locale === "zh"
+                ? "没有符合搜索条件的资源。"
+                : "No matching resources."}
           </p>
         ) : (
           <ul className="resource-lib__list">
@@ -433,14 +459,22 @@ export default function ResourceLibraryPage() {
               <li key={item.id}>
                 <article
                   className={`resource-lib__card${item.pinned ? " resource-lib__card--pinned" : ""}`}
-                  title="点击复制链接（无链接时复制标题）"
+                  title={
+                    locale === "zh"
+                      ? "点击复制链接（无链接时复制标题）"
+                      : "Click to copy URL (or title if URL is empty)"
+                  }
                   onClick={() => copyCardContents(item)}
                   onContextMenu={(e) => onCardContextMenu(e, item)}
                 >
                   <div className="resource-lib__card-top">
                     <div className="resource-lib__card-title-row">
                       {item.pinned ? (
-                        <span className="resource-lib__pin-badge" title="已置顶" aria-label="已置顶">
+                        <span
+                          className="resource-lib__pin-badge"
+                          title={locale === "zh" ? "已置顶" : "Pinned"}
+                          aria-label={locale === "zh" ? "已置顶" : "Pinned"}
+                        >
                           <PinIcon filled />
                         </span>
                       ) : null}
@@ -451,7 +485,15 @@ export default function ResourceLibraryPage() {
                     <button
                       type="button"
                       className={`resource-lib__pin-btn${item.pinned ? " is-active" : ""}`}
-                      title={item.pinned ? "取消置顶" : "置顶"}
+                      title={
+                        item.pinned
+                          ? locale === "zh"
+                            ? "取消置顶"
+                            : "Unpin"
+                          : locale === "zh"
+                            ? "置顶"
+                            : "Pin"
+                      }
                       aria-pressed={item.pinned}
                       disabled={saving}
                       onClick={(e) => {
@@ -465,10 +507,12 @@ export default function ResourceLibraryPage() {
                   {item.url ? (
                     <span className="resource-lib__url resource-lib__url--text">{item.url}</span>
                   ) : (
-                    <p className="resource-lib__no-url muted">未填写链接</p>
+                    <p className="resource-lib__no-url muted">
+                      {locale === "zh" ? "未填写链接" : "No URL"}
+                    </p>
                   )}
                   {item.tags.length > 0 ? (
-                    <ul className="resource-lib__tags" aria-label="标签">
+                    <ul className="resource-lib__tags" aria-label={locale === "zh" ? "标签" : "Tags"}>
                       {item.tags.map((t) => (
                         <li key={t}>
                           <span className="resource-lib__tag">{t}</span>
@@ -503,17 +547,25 @@ export default function ResourceLibraryPage() {
                 <header className="prompt-create-modal__header">
                   <div className="prompt-create-modal__header-text">
                     <h2 id="resource-editor-title" className="prompt-create-modal__title">
-                      {editingItemId ? "编辑资源" : "新建资源"}
+                      {editingItemId
+                        ? locale === "zh"
+                          ? "编辑资源"
+                          : "Edit resource"
+                        : locale === "zh"
+                          ? "新建资源"
+                          : "New resource"}
                     </h2>
                     <p className="prompt-create-modal__subtitle">
-                      标题必填；链接可空（仅占位）；标签用逗号、顿号或空格分隔；支持置顶与备注。
+                      {locale === "zh"
+                        ? "标题必填；链接可空（仅占位）；标签用逗号、顿号或空格分隔；支持置顶与备注。"
+                        : "Title is required. URL is optional. Split tags by comma/space. Supports pin and notes."}
                     </p>
                   </div>
                   <button
                     type="button"
                     className="prompt-create-modal__close"
                     onClick={() => closeEditor()}
-                    aria-label="关闭"
+                    aria-label={locale === "zh" ? "关闭" : "Close"}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
                       <path
@@ -536,28 +588,35 @@ export default function ResourceLibraryPage() {
                 >
                   <div className="prompt-create-modal__body">
                     <label className="prompt-create-modal__field" htmlFor="res-title">
-                      <span className="prompt-create-modal__label">标题</span>
+                      <span className="prompt-create-modal__label">{locale === "zh" ? "标题" : "Title"}</span>
                       <input
                         ref={titleInputRef}
                         id="res-title"
                         className="prompt-create-modal__input"
                         value={draft.title}
                         onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-                        placeholder="如：某组件库、某 GitHub 仓库"
+                        placeholder={
+                          locale === "zh"
+                            ? "如：某组件库、某 GitHub 仓库"
+                            : "e.g. component library, GitHub repository"
+                        }
                         autoComplete="off"
                       />
                     </label>
 
                     <label className="prompt-create-modal__field" htmlFor="res-url">
                       <span className="prompt-create-modal__label">
-                        链接 <span className="prompt-create-modal__label-optional">选填</span>
+                        {locale === "zh" ? "链接" : "URL"}{" "}
+                        <span className="prompt-create-modal__label-optional">
+                          {locale === "zh" ? "选填" : "optional"}
+                        </span>
                       </span>
                       <input
                         id="res-url"
                         className="prompt-create-modal__input"
                         value={draft.url}
                         onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
-                        placeholder="https:// 或 github.com/…"
+                        placeholder={locale === "zh" ? "https:// 或 github.com/…" : "https:// or github.com/..."}
                         inputMode="url"
                         autoComplete="off"
                       />
@@ -565,7 +624,10 @@ export default function ResourceLibraryPage() {
 
                     <label className="prompt-create-modal__field" htmlFor="res-tags">
                       <span className="prompt-create-modal__label">
-                        标签 <span className="prompt-create-modal__label-optional">选填</span>
+                        {locale === "zh" ? "标签" : "Tags"}{" "}
+                        <span className="prompt-create-modal__label-optional">
+                          {locale === "zh" ? "选填" : "optional"}
+                        </span>
                       </span>
                       <input
                         id="res-tags"
@@ -579,7 +641,10 @@ export default function ResourceLibraryPage() {
 
                     <label className="prompt-create-modal__field" htmlFor="res-note">
                       <span className="prompt-create-modal__label">
-                        备注 <span className="prompt-create-modal__label-optional">选填</span>
+                        {locale === "zh" ? "备注" : "Note"}{" "}
+                        <span className="prompt-create-modal__label-optional">
+                          {locale === "zh" ? "选填" : "optional"}
+                        </span>
                       </span>
                       <textarea
                         id="res-note"
@@ -587,7 +652,11 @@ export default function ResourceLibraryPage() {
                         rows={4}
                         value={draft.note}
                         onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
-                        placeholder="用途、账号提示、踩坑记录等"
+                        placeholder={
+                          locale === "zh"
+                            ? "用途、账号提示、踩坑记录等"
+                            : "Usage notes, account hints, caveats..."
+                        }
                         spellCheck={false}
                       />
                     </label>
@@ -600,13 +669,17 @@ export default function ResourceLibraryPage() {
                         onChange={(e) => setDraft((d) => ({ ...d, pinned: e.target.checked }))}
                       />
                       <span className="prompt-create-modal__label resource-lib__check-label">
-                        置顶（置顶项排在列表最前，同组内按创建时间从新到旧）
+                        {locale === "zh"
+                          ? "置顶（置顶项排在列表最前，同组内按创建时间从新到旧）"
+                          : "Pin item (pinned items are shown first)"}
                       </span>
                     </label>
                   </div>
 
                   <footer className="prompt-create-modal__footer">
-                    <span className="prompt-create-modal__kbd-hint">Esc 关闭</span>
+                    <span className="prompt-create-modal__kbd-hint">
+                      {locale === "zh" ? "Esc 关闭" : "Esc to close"}
+                    </span>
                     <div className="prompt-create-modal__actions">
                       <button
                         type="button"
@@ -614,10 +687,10 @@ export default function ResourceLibraryPage() {
                         onClick={() => closeEditor()}
                         disabled={saving}
                       >
-                        取消
+                        {locale === "zh" ? "取消" : "Cancel"}
                       </button>
                       <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
-                        保存
+                        {locale === "zh" ? "保存" : "Save"}
                       </button>
                     </div>
                   </footer>
@@ -640,7 +713,7 @@ export default function ResourceLibraryPage() {
                 zIndex: 10_000,
               }}
               role="menu"
-              aria-label="资源操作"
+              aria-label={locale === "zh" ? "资源操作" : "Resource actions"}
             >
               <button
                 type="button"
@@ -653,7 +726,7 @@ export default function ResourceLibraryPage() {
                   openEdit(it);
                 }}
               >
-                编辑
+                {locale === "zh" ? "编辑" : "Edit"}
               </button>
               {cardContextMenu.item.url?.trim() ? (
                 <button
@@ -667,7 +740,7 @@ export default function ResourceLibraryPage() {
                     window.open(openHref(u), "_blank", "noopener,noreferrer");
                   }}
                 >
-                  在浏览器打开
+                  {locale === "zh" ? "在浏览器打开" : "Open in browser"}
                 </button>
               ) : null}
               {cardContextMenu.item.url?.trim() ? (
@@ -679,10 +752,10 @@ export default function ResourceLibraryPage() {
                   onClick={() => {
                     const u = cardContextMenu.item.url ?? "";
                     setCardContextMenu(null);
-                    void copyText(u, "已复制链接");
+                    void copyText(u, locale === "zh" ? "已复制链接" : "URL copied");
                   }}
                 >
-                  复制链接
+                  {locale === "zh" ? "复制链接" : "Copy URL"}
                 </button>
               ) : null}
               <button
@@ -696,7 +769,13 @@ export default function ResourceLibraryPage() {
                   void togglePin(it);
                 }}
               >
-                {cardContextMenu.item.pinned ? "取消置顶" : "置顶"}
+                {cardContextMenu.item.pinned
+                  ? locale === "zh"
+                    ? "取消置顶"
+                    : "Unpin"
+                  : locale === "zh"
+                    ? "置顶"
+                    : "Pin"}
               </button>
               <button
                 type="button"
@@ -709,21 +788,21 @@ export default function ResourceLibraryPage() {
                   void onDeleteItem(id);
                 }}
               >
-                删除
+                {locale === "zh" ? "删除" : "Delete"}
               </button>
             </div>,
             document.body,
           )
         : null}
 
-      <div className="resource-lib__quickadd" aria-label="快速粘贴链接">
-        <span className="resource-lib__quickadd-label">快速添加</span>
+      <div className="resource-lib__quickadd" aria-label={locale === "zh" ? "快速粘贴链接" : "Quick add URL"}>
+        <span className="resource-lib__quickadd-label">{locale === "zh" ? "快速添加" : "Quick Add"}</span>
         <div className="resource-lib__quickadd-row">
           <input
             ref={quickPasteInputRef}
             type="text"
             className="resource-lib__quickadd-input"
-            placeholder="粘贴链接，自动识别"
+            placeholder={locale === "zh" ? "粘贴链接，自动识别" : "Paste URL for auto detect"}
             disabled={quickPasteBusy || saving}
             spellCheck={false}
             onPaste={(e) => {
@@ -742,7 +821,7 @@ export default function ResourceLibraryPage() {
           />
           {quickPasteBusy ? (
             <span className="resource-lib__quickadd-status" aria-live="polite">
-              AI 分析中…
+              {locale === "zh" ? "AI 分析中…" : "AI analyzing…"}
             </span>
           ) : null}
         </div>

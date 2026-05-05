@@ -40,8 +40,13 @@ fn scenario_map_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_local_dir(app)?.join("asset_scenarios.json"))
 }
 
-fn brief_map_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_local_dir(app)?.join("asset_briefs_zh.json"))
+fn brief_map_path(app: &AppHandle, locale: &str) -> Result<PathBuf, String> {
+    let key = match locale {
+        "zh" => "asset_briefs_zh.json",
+        "en" => "asset_briefs_en.json",
+        _ => "asset_briefs_en.json",
+    };
+    Ok(app_local_dir(app)?.join(key))
 }
 
 pub fn get_deepseek_settings_public(app: &AppHandle) -> Result<DeepseekSettingsPublic, String> {
@@ -101,9 +106,19 @@ pub fn merge_scenario_map(app: &AppHandle, delta: &HashMap<String, String>) -> R
     save_scenario_map(app, &m)
 }
 
-pub fn load_brief_map(app: &AppHandle) -> Result<HashMap<String, String>, String> {
-    let path = brief_map_path(app)?;
+pub fn load_brief_map(app: &AppHandle, locale: &str) -> Result<HashMap<String, String>, String> {
+    let path = brief_map_path(app, locale)?;
     if !path.is_file() {
+        // backward compatibility: legacy zh brief cache file
+        if locale == "zh" {
+            let legacy = app_local_dir(app)?.join("asset_briefs_zh.json");
+            if legacy.is_file() {
+                let text = fs::read_to_string(&legacy).map_err(|e| e.to_string())?;
+                let v: HashMap<String, String> =
+                    serde_json::from_str(&text).map_err(|e| format!("读取缩略介绍缓存失败：{e}"))?;
+                return Ok(v);
+            }
+        }
         return Ok(HashMap::new());
     }
     let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -112,15 +127,19 @@ pub fn load_brief_map(app: &AppHandle) -> Result<HashMap<String, String>, String
     Ok(v)
 }
 
-pub fn merge_brief_map(app: &AppHandle, delta: &HashMap<String, String>) -> Result<(), String> {
+pub fn merge_brief_map(
+    app: &AppHandle,
+    locale: &str,
+    delta: &HashMap<String, String>,
+) -> Result<(), String> {
     if delta.is_empty() {
         return Ok(());
     }
-    let mut m = load_brief_map(app).unwrap_or_default();
+    let mut m = load_brief_map(app, locale).unwrap_or_default();
     for (k, v) in delta {
         m.insert(k.clone(), v.clone());
     }
-    save_brief_map(app, &m)
+    save_brief_map(app, locale, &m)
 }
 
 fn save_scenario_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(), String> {
@@ -132,8 +151,12 @@ fn save_scenario_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(
     Ok(())
 }
 
-fn save_brief_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(), String> {
-    let path = brief_map_path(app)?;
+fn save_brief_map(
+    app: &AppHandle,
+    locale: &str,
+    map: &HashMap<String, String>,
+) -> Result<(), String> {
+    let path = brief_map_path(app, locale)?;
     ensure_parent(&path)?;
     let json =
         serde_json::to_string_pretty(map).map_err(|e| format!("序列化缩略介绍缓存失败：{e}"))?;

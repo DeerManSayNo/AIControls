@@ -29,13 +29,14 @@ import SettingsPage from "./views/SettingsPage";
 import SkillBrowseShell from "./views/SkillBrowseShell";
 import PromptLibraryPage from "./views/PromptLibraryPage";
 import ResourceLibraryPage from "./views/ResourceLibraryPage";
+import { useI18n } from "./i18n/provider";
 
 function navClass(active: boolean) {
   return `side-nav-link${active ? " active" : ""}`;
 }
 
 function folderBasename(path: string): string {
-  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "Project";
 }
 
 function readBoolFromLocalStorage(key: string, fallback: boolean): boolean {
@@ -50,6 +51,7 @@ function readBoolFromLocalStorage(key: string, fallback: boolean): boolean {
 }
 
 function Layout({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [searchParams] = useSearchParams();
   const { pathname } = useLocation();
   const pathFromUrl = searchParams.get("path");
@@ -79,7 +81,7 @@ function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="app-shell">
-      <aside className="side-nav" aria-label="主导航">
+      <aside className="side-nav" aria-label={t("nav.main")}>
         <div className="side-nav__primary">
           <div className="side-nav-brand">
             <div className="side-nav-brand__mark" aria-hidden>
@@ -87,7 +89,7 @@ function Layout({ children }: { children: ReactNode }) {
             </div>
             <div className="side-nav-brand__text">
               <span className="side-nav-brand__name">AIControls</span>
-              <span className="side-nav-brand__tag">控制台</span>
+              <span className="side-nav-brand__tag">{t("nav.tagline")}</span>
             </div>
           </div>
           <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
@@ -95,7 +97,7 @@ function Layout({ children }: { children: ReactNode }) {
               <NavIconHome />
             </span>
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-              首页
+              {t("nav.home")}
             </span>
           </NavLink>
           <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
@@ -103,7 +105,7 @@ function Layout({ children }: { children: ReactNode }) {
               <NavIconLayers />
             </span>
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-              全部
+              {t("nav.assets")}
             </span>
           </NavLink>
           <NavLink to="/prompts" className={({ isActive }) => navClass(isActive)}>
@@ -111,7 +113,7 @@ function Layout({ children }: { children: ReactNode }) {
               <NavIconPrompt />
             </span>
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-              Prompt 库
+              {t("nav.prompts")}
             </span>
           </NavLink>
           <NavLink
@@ -122,7 +124,7 @@ function Layout({ children }: { children: ReactNode }) {
               <NavIconFolder />
             </span>
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-              资源库
+              {t("nav.resources")}
             </span>
           </NavLink>
         </div>
@@ -158,7 +160,7 @@ function Layout({ children }: { children: ReactNode }) {
           </div>
           <div
             className={`side-nav__projects${projectsCollapsed ? " side-nav__projects--collapsed" : ""}`}
-            aria-label="项目列表"
+            aria-label={t("nav.projects")}
           >
             <button
               type="button"
@@ -180,7 +182,7 @@ function Layout({ children }: { children: ReactNode }) {
                 });
               }}
             >
-              <span>全部项目</span>
+              <span>{t("nav.projects")}</span>
               <span className="side-nav-section-toggle__chevron" aria-hidden>
                 ▾
               </span>
@@ -207,13 +209,13 @@ function Layout({ children }: { children: ReactNode }) {
           <NavLink
             to="/settings"
             className={({ isActive }) => navClass(isActive)}
-            title="设置"
+            title={t("nav.settings")}
           >
             <span className="side-nav-link__icon">
               <NavIconSettings />
             </span>
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
-              设置
+              {t("nav.settings")}
             </span>
           </NavLink>
         </div>
@@ -239,7 +241,7 @@ function AgentRoute() {
   const title =
     ecosystem && AGENT_TITLES[ecosystem]
       ? AGENT_TITLES[ecosystem]
-      : `Agent：${ecosystem ?? "—"}`;
+      : `Agent: ${ecosystem ?? "-"}`;
   return <SkillBrowseShell title={title} ecosystem={eco} />;
 }
 
@@ -247,7 +249,7 @@ function ProjectRoute() {
   const [sp] = useSearchParams();
   const path = sp.get("path");
   const folderTitle =
-    path != null && path.length > 0 ? folderBasename(path) : "项目";
+    path != null && path.length > 0 ? folderBasename(path) : "Project";
 
   return (
     <SkillBrowseShell
@@ -255,7 +257,7 @@ function ProjectRoute() {
       dataSet="project"
       projectRoot={path ?? undefined}
       subtitle={
-        path ? `路径：${path}` : "请点击侧栏「添加项目」选择本地文件夹。"
+        path ? `Path: ${path}` : "Please add a local project folder from the sidebar."
       }
     />
   );
@@ -265,10 +267,10 @@ export default function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<ShellPage title="首页" />} />
+        <Route path="/" element={<ShellPage title="Home" />} />
         <Route
           path="/assets"
-          element={<SkillBrowseShell title="全部" dataSet="aggregate" />}
+          element={<SkillBrowseShell title="Assets" dataSet="aggregate" />}
         />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/prompts" element={<PromptLibraryPage />} />

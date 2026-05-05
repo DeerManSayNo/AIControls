@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
   deepseekClassifyInventory,
+  deepseekResummarizeAsset,
   deepseekSummarizeInventory,
   getDeepseekSettings,
 } from "../api/deepseek";
@@ -32,9 +33,9 @@ import { PageRefreshButton } from "../components/PageRefreshButton";
 import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
 import { SkillDetailPanel, type DetailEntry } from "../components/SkillDetailPanel";
 import {
+  getScenarioHint,
+  getScenarioLabel,
   rowMatchesScenarioChip,
-  SCENARIO_HINT,
-  SCENARIO_LABEL,
   SCENARIO_ORDER,
   type ScenarioKey,
 } from "../skillScenarioCategories";
@@ -46,11 +47,13 @@ import {
 } from "../agentAssetGrouping";
 import { revealPathInFolder } from "../api/reveal";
 import { buildCopySkillMenuSections } from "../skillCopyTargets";
+import { useI18n } from "../i18n/provider";
 
 type AssetKind = "skill" | "mcp" | "rule";
 
 type BrowseRow = {
   id: string;
+  sourceId: string;
   title: string;
   desc: string;
   descSource: "ai" | "source";
@@ -85,7 +88,7 @@ const AGENT_LABEL_BY_ID: Record<string, string> = {
 const FALLBACK_AGENT_IDS = ["cursor", "claude", "trae", "qoder", "kiro"] as const;
 
 function folderBasename(path: string): string {
-  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "Project";
 }
 
 /** 列表里技能包为目录路径；散装 `SKILL.md` 以文件名结尾，只支持复制、不提供「删除文件夹」 */
@@ -132,10 +135,10 @@ function scenarioMapFromInventory(inv: AgentInventory): Map<string, string> {
   return m;
 }
 
-function briefMapFromInventory(inv: AgentInventory): Map<string, string> {
+function briefMapFromInventory(inv: AgentInventory, locale: "zh" | "en"): Map<string, string> {
   const m = new Map<string, string>();
   for (const e of [...inv.skills, ...inv.mcp, ...inv.rules]) {
-    const brief = e.brief_zh?.trim();
+    const brief = (locale === "zh" ? e.brief_zh : e.brief_en)?.trim();
     if (brief) m.set(e.id, brief);
   }
   return m;
@@ -175,11 +178,13 @@ function patchAggregateSnapshot(
 
 function patchAgentInventoryBrief(
   inv: AgentInventory,
+  locale: "zh" | "en",
   map: Map<string, string>,
 ): AgentInventory {
   const patch = (e: AssetEntry): AssetEntry => ({
     ...e,
-    brief_zh: map.get(e.id) ?? e.brief_zh ?? null,
+    brief_zh: locale === "zh" ? map.get(e.id) ?? e.brief_zh ?? null : e.brief_zh ?? null,
+    brief_en: locale === "en" ? map.get(e.id) ?? e.brief_en ?? null : e.brief_en ?? null,
   });
   return {
     skills: inv.skills.map(patch),
@@ -190,28 +195,50 @@ function patchAgentInventoryBrief(
 
 function patchAggregateSnapshotBrief(
   snap: AggregateSnapshot,
+  locale: "zh" | "en",
   map: Map<string, string>,
 ): AggregateSnapshot {
   return {
     agents: snap.agents.map((a) => ({
       ...a,
-      inv: a.inv ? patchAgentInventoryBrief(a.inv, map) : null,
+      inv: a.inv ? patchAgentInventoryBrief(a.inv, locale, map) : null,
     })),
     projects: snap.projects.map((p) => ({
       ...p,
-      inv: p.inv ? patchAgentInventoryBrief(p.inv, map) : null,
+      inv: p.inv ? patchAgentInventoryBrief(p.inv, locale, map) : null,
     })),
     anyInventoryFailed: snap.anyInventoryFailed,
+  };
+}
+
+function patchEntryBriefInInventory(
+  inv: AgentInventory,
+  sourceId: string,
+  locale: "zh" | "en",
+  brief: string,
+): AgentInventory {
+  const patch = (e: AssetEntry): AssetEntry =>
+    e.id === sourceId
+      ? {
+          ...e,
+          brief_zh: locale === "zh" ? brief : e.brief_zh ?? null,
+          brief_en: locale === "en" ? brief : e.brief_en ?? null,
+        }
+      : e;
+  return {
+    skills: inv.skills.map(patch),
+    mcp: inv.mcp.map(patch),
+    rules: inv.rules.map(patch),
   };
 }
 
 type FilterKey = "all" | AssetKind;
 
 const FILTER_LABEL: Record<FilterKey, string> = {
-  all: "全部",
+  all: "All",
   skill: "Skill",
   mcp: "MCP",
-  rule: "Rules",
+  rule: "Rule",
 };
 
 const SEGMENT_KEYS: FilterKey[] = ["all", "skill", "mcp", "rule"];
@@ -220,12 +247,14 @@ function inventoryToRows(
   inv: AgentInventory,
   ecosystem: string,
   agentTitle: string,
+  locale: "zh" | "en",
 ): BrowseRow[] {
   const rows: BrowseRow[] = [];
   const push = (e: AssetEntry, kind: AssetKind) => {
-    const brief = e.brief_zh?.trim();
+    const brief = (locale === "zh" ? e.brief_zh : e.brief_en)?.trim();
     rows.push({
       id: e.id,
+      sourceId: e.id,
       title: e.title,
       desc: brief || e.description,
       descSource: brief ? "ai" : "source",
@@ -296,6 +325,7 @@ export default function SkillBrowseShell({
   subtitle,
   projectRoot,
 }: Props) {
+  const { locale } = useI18n();
   const searchFieldId = useId();
   const browseSectionDomPrefix = useId().replace(/\W/g, "");
   const [searchParams] = useSearchParams();
@@ -483,17 +513,17 @@ export default function SkillBrowseShell({
 
       const baseForSummary = classified ?? merged;
       setAiBriefBusy(true);
-      const summarized = await deepseekSummarizeInventory(baseForSummary);
+      const summarized = await deepseekSummarizeInventory(baseForSummary, locale);
       if (cancelled || !summarized) {
         if (!cancelled) setAiBriefBusy(false);
         return;
       }
-      const briefMap = briefMapFromInventory(summarized);
-      setLiveInv((prev) => (prev ? patchAgentInventoryBrief(prev, briefMap) : prev));
+      const briefMap = briefMapFromInventory(summarized, locale);
+      setLiveInv((prev) => (prev ? patchAgentInventoryBrief(prev, locale, briefMap) : prev));
       setAgentProjectScans((prev) =>
         prev.map((item) => ({
           ...item,
-          inv: item.inv ? patchAgentInventoryBrief(item.inv, briefMap) : null,
+          inv: item.inv ? patchAgentInventoryBrief(item.inv, locale, briefMap) : null,
         })),
       );
       if (!cancelled) setAiBriefBusy(false);
@@ -502,7 +532,7 @@ export default function SkillBrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [ecosystem, dataSet, projectPaths, refreshKey]);
+  }, [ecosystem, dataSet, projectPaths, refreshKey, locale]);
 
   useEffect(() => {
     if (dataSet !== "project") {
@@ -538,14 +568,14 @@ export default function SkillBrowseShell({
       if (!cancelled) setAiScenarioBusy(false);
       const baseForSummary = next ?? data;
       setAiBriefBusy(true);
-      const summarized = await deepseekSummarizeInventory(baseForSummary);
+      const summarized = await deepseekSummarizeInventory(baseForSummary, locale);
       if (!cancelled && summarized) setProjectInv(summarized);
       if (!cancelled) setAiBriefBusy(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [dataSet, projectRoot, refreshKey]);
+  }, [dataSet, projectRoot, refreshKey, locale]);
 
   useEffect(() => {
     if (dataSet !== "aggregate") {
@@ -626,11 +656,11 @@ export default function SkillBrowseShell({
 
       const baseForSummary = classified ?? merged;
       setAiBriefBusy(true);
-      const summarized = await deepseekSummarizeInventory(baseForSummary);
+      const summarized = await deepseekSummarizeInventory(baseForSummary, locale);
       if (!cancelled && summarized) {
-        const briefMap = briefMapFromInventory(summarized);
+        const briefMap = briefMapFromInventory(summarized, locale);
         setAggregateSnapshot((prev) =>
-          prev ? patchAggregateSnapshotBrief(prev, briefMap) : prev,
+          prev ? patchAggregateSnapshotBrief(prev, locale, briefMap) : prev,
         );
       }
       if (!cancelled) setAiBriefBusy(false);
@@ -639,7 +669,7 @@ export default function SkillBrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [dataSet, projectPaths, refreshKey]);
+  }, [dataSet, projectPaths, refreshKey, locale]);
 
   const { sections, scenarioCounts } = useMemo((): {
     sections: BrowseSection[];
@@ -687,9 +717,11 @@ export default function SkillBrowseShell({
       for (const { agentId, inv } of buckets) {
         const agentTitle =
           agentId === "__other__"
-            ? "其他"
+            ? locale === "zh"
+              ? "其他"
+              : "Other"
             : AGENT_LABEL_BY_ID[agentId] ?? agentId;
-        let rows = inventoryToRows(inv, agentId, agentTitle).map((r) => ({
+        let rows = inventoryToRows(inv, agentId, agentTitle, locale).map((r) => ({
           ...r,
           id: `proj:${agentId}:${r.id}`,
         }));
@@ -712,10 +744,10 @@ export default function SkillBrowseShell({
       for (const a of aggregateSnapshot.agents) {
         if (!a.inv) continue;
         rows.push(
-          ...inventoryToRows(a.inv, a.id, a.title).map((r) => ({
+          ...inventoryToRows(a.inv, a.id, a.title, locale).map((r) => ({
             ...r,
             id: `g:${a.id}:${r.id}`,
-            tags: [a.title, "用户全局"],
+            tags: [a.title, locale === "zh" ? "用户全局" : "Global"],
           })),
         );
       }
@@ -723,11 +755,13 @@ export default function SkillBrowseShell({
         if (!p.inv) continue;
         const bn = folderBasename(p.path);
         rows.push(
-          ...inventoryToRows(p.inv, "project", bn).map((r) => {
+          ...inventoryToRows(p.inv, "project", bn, locale).map((r) => {
             const aid = inferAgentIdFromAssetPath(r.sourcePath ?? "");
             const agentLbl = aid
               ? (AGENT_LABEL_BY_ID[aid] ?? aid)
-              : "其他";
+              : locale === "zh"
+                ? "其他"
+                : "Other";
             return {
               ...r,
               id: `p:${p.path}:${r.id}`,
@@ -751,7 +785,7 @@ export default function SkillBrowseShell({
       let globalRows: BrowseRow[] = [];
       if (liveInv) {
         globalRows = applyKindAndQuery(
-          inventoryToRows(liveInv, ecosystem, title).map((r) => ({
+          inventoryToRows(liveInv, ecosystem, title, locale).map((r) => ({
             ...r,
             id: `g:${ecosystem}:${r.id}`,
           })),
@@ -759,7 +793,7 @@ export default function SkillBrowseShell({
       }
       const globalSection: BrowseSection = {
         key: globalKey,
-        title: "用户全局目录",
+        title: locale === "zh" ? "用户全局目录" : "Global user directory",
         rows: globalRows,
       };
 
@@ -769,7 +803,7 @@ export default function SkillBrowseShell({
         const scoped = filterInventoryForAgent(ecosystem, inv);
         if (inventoryAssetCount(scoped) === 0) continue;
         const bn = folderBasename(path);
-        let rows = inventoryToRows(scoped, "project", bn).map((r) => ({
+        let rows = inventoryToRows(scoped, "project", bn, locale).map((r) => ({
           ...r,
           id: `a:${ecosystem}:${path}:${r.id}`,
         }));
@@ -812,6 +846,7 @@ export default function SkillBrowseShell({
     aggregateSnapshot,
     aggregateLoading,
     agentProjectScans,
+    locale,
   ]);
 
   useEffect(() => {
@@ -927,19 +962,19 @@ export default function SkillBrowseShell({
           <span
             className={`skill-card__radio skill-card__radio--${item.descSource}`}
             aria-hidden
-            title={item.descSource === "ai" ? "AI 缩略介绍" : "原始描述"}
+            title={item.descSource === "ai" ? (locale === "zh" ? "AI 缩略介绍" : "AI brief") : (locale === "zh" ? "原始描述" : "Source description")}
           />
           <span className="skill-card__title">{item.title}</span>
           <span
             className={`skill-card__kind skill-card__kind--${item.kind}`}
-            aria-label={`类型：${FILTER_LABEL[item.kind]}`}
+            aria-label={`${locale === "zh" ? "类型" : "Type"}: ${FILTER_LABEL[item.kind]}`}
           >
             {FILTER_LABEL[item.kind]}
           </span>
         </div>
         <p className="skill-card__desc">{item.desc}</p>
         {dataSet === "aggregate" && item.tags.length > 0 ? (
-          <div className="skill-card__tags" aria-label="来源标签">
+          <div className="skill-card__tags" aria-label={locale === "zh" ? "来源标签" : "Source tags"}>
             {item.tags.map((t, i) => (
               <span key={`${item.id}-tag-${i}`} className="skill-card__tag">
                 {t}
@@ -963,7 +998,7 @@ export default function SkillBrowseShell({
             onClick={onRefreshInventory}
             disabled={refreshBusy}
             spinning={refreshBusy}
-            label="重新扫描并加载"
+            label={locale === "zh" ? "重新扫描并加载" : "Rescan and reload"}
           />
         </div>
         {subtitle ? (
@@ -974,8 +1009,12 @@ export default function SkillBrowseShell({
         {ecosystem && dataSet === "skills" && (liveLoading || liveFailed) ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {liveLoading
-              ? "正在读取该 Agent 的用户级全局目录与侧栏已添加项目…"
-              : "无法读取用户级全局目录：仍可查看侧栏项目中归属该 Agent 的配置；请在桌面端运行或检查权限。"}
+              ? locale === "zh"
+                ? "正在读取该 Agent 的用户级全局目录与侧栏已添加项目…"
+                : "Loading this agent's global directory and added projects…"
+              : locale === "zh"
+                ? "无法读取用户级全局目录：仍可查看侧栏项目中归属该 Agent 的配置；请在桌面端运行或检查权限。"
+                : "Failed to read global directory. You can still view project-scoped entries."}
           </p>
         ) : null}
         {dataSet === "project" &&
@@ -983,17 +1022,27 @@ export default function SkillBrowseShell({
         (projectLoading || projectFailed) ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {projectLoading
-              ? "正在扫描所选目录下各 Agent skills 目录、MCP（JSON）与规则文件…"
-              : "无法扫描该目录：请在 AIControls 桌面端运行，或检查路径与权限。"}
+              ? locale === "zh"
+                ? "正在扫描所选目录下各 Agent skills 目录、MCP（JSON）与规则文件…"
+                : "Scanning agent skills, MCP JSON and rules in selected directory…"
+              : locale === "zh"
+                ? "无法扫描该目录：请在 AIControls 桌面端运行，或检查路径与权限。"
+                : "Failed to scan this directory. Check desktop runtime and permissions."}
           </p>
         ) : null}
         {dataSet === "aggregate" ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {aggregateLoading || aggregateSnapshot === null
-              ? "正在汇总各 Agent 用户级全局目录与侧栏已添加项目…"
+              ? locale === "zh"
+                ? "正在汇总各 Agent 用户级全局目录与侧栏已添加项目…"
+                : "Aggregating global assets and added projects…"
               : aggregateSnapshot.anyInventoryFailed
-                ? "部分目录读取失败，已展示可用结果。"
-                : "包含所有已识别 Agent 的全局 Skills、MCP、Rules，以及「全部项目」中各目录的扫描结果。"}
+                ? locale === "zh"
+                  ? "部分目录读取失败，已展示可用结果。"
+                  : "Some directories failed to load; showing available results."
+                : locale === "zh"
+                  ? "包含所有已识别 Agent 的全局 Skills、MCP、Rules，以及「全部项目」中各目录的扫描结果。"
+                  : "Includes global assets from detected agents and scanned results from all projects."}
           </p>
         ) : null}
       </div>
@@ -1009,13 +1058,21 @@ export default function SkillBrowseShell({
                 id={searchFieldId}
                 className="search__input"
                 type="search"
-                placeholder="搜索标题、描述或路径…"
+                placeholder={
+                  locale === "zh"
+                    ? "搜索标题、描述或路径…"
+                    : "Search title, description, or path…"
+                }
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 autoComplete="off"
               />
             </label>
-            <div className="seg" role="tablist" aria-label="类型筛选">
+            <div
+              className="seg"
+              role="tablist"
+              aria-label={locale === "zh" ? "类型筛选" : "Type filter"}
+            >
               {SEGMENT_KEYS.map((k) => (
                 <button
                   key={k}
@@ -1030,16 +1087,20 @@ export default function SkillBrowseShell({
               ))}
             </div>
           </div>
-          <div className="scenario-strip" role="tablist" aria-label="场景分类">
+          <div
+            className="scenario-strip"
+            role="tablist"
+            aria-label={locale === "zh" ? "场景分类" : "Scenario filter"}
+          >
             <button
               type="button"
               role="tab"
               aria-selected={scenario === "all"}
-              title="展示全部 Skill、MCP 与 Rules"
+              title={locale === "zh" ? "展示全部 Skill、MCP 与 Rules" : "Show all Skills, MCP and Rules"}
               className={`scenario-chip${scenario === "all" ? " active" : ""}`}
               onClick={() => setScenario("all")}
             >
-              {SCENARIO_LABEL.all}（{scenarioCounts.all}）
+              {getScenarioLabel(locale, "all")} ({scenarioCounts.all})
             </button>
             {SCENARIO_ORDER.map((key) => (
               <button
@@ -1047,11 +1108,11 @@ export default function SkillBrowseShell({
                 type="button"
                 role="tab"
                 aria-selected={scenario === key}
-                title={SCENARIO_HINT[key]}
+                title={getScenarioHint(locale, key)}
                 className={`scenario-chip${scenario === key ? " active" : ""}`}
                 onClick={() => setScenario(key)}
               >
-                {SCENARIO_LABEL[key]}（{scenarioCounts[key]}）
+                {getScenarioLabel(locale, key)} ({scenarioCounts[key]})
               </button>
             ))}
           </div>
@@ -1062,8 +1123,12 @@ export default function SkillBrowseShell({
               aria-live="polite"
             >
               {aiScenarioBusy
-                ? "DeepSeek 正在为尚未写入本地缓存的条目补全场景分类，请稍候…"
-                : "DeepSeek 正在逐条生成中文缩略介绍（100字以内），请稍候…"}
+                ? locale === "zh"
+                  ? "DeepSeek 正在为尚未写入本地缓存的条目补全场景分类，请稍候…"
+                  : "DeepSeek is classifying uncached entries…"
+                : locale === "zh"
+                  ? "DeepSeek 正在逐条生成中文缩略介绍（100字以内），请稍候…"
+                  : "DeepSeek is generating English briefs (<=100 chars) …"}
             </p>
           ) : null}
         </div>
@@ -1127,7 +1192,7 @@ export default function SkillBrowseShell({
                 zIndex: 10_000,
               }}
               role="menu"
-              aria-label="卡片操作"
+              aria-label={locale === "zh" ? "卡片操作" : "Card actions"}
             >
               <button
                 type="button"
@@ -1139,7 +1204,73 @@ export default function SkillBrowseShell({
                   setCardContextMenu(null);
                 }}
               >
-                在所在目录中显示
+                {locale === "zh" ? "在所在目录中显示" : "Show in folder"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                onClick={() => {
+                  const row = cardContextMenu.row;
+                  setCardContextMenu(null);
+                  void (async () => {
+                    const brief = await deepseekResummarizeAsset(
+                      {
+                        id: row.sourceId,
+                        kind: row.kind,
+                        title: row.title,
+                        description: row.desc,
+                        path: row.sourcePath ?? "",
+                        active: row.active,
+                      },
+                      locale,
+                    );
+                    if (!brief) {
+                      window.alert(locale === "zh" ? "重新生成简介失败" : "Failed to regenerate brief");
+                      return;
+                    }
+                    const srcId = row.sourceId;
+                    setLiveInv((prev) =>
+                      prev ? patchEntryBriefInInventory(prev, srcId, locale, brief) : prev,
+                    );
+                    setAgentProjectScans((prev) =>
+                      prev.map((item) => ({
+                        ...item,
+                        inv: item.inv
+                          ? patchEntryBriefInInventory(item.inv, srcId, locale, brief)
+                          : null,
+                      })),
+                    );
+                    setProjectInv((prev) =>
+                      prev ? patchEntryBriefInInventory(prev, srcId, locale, brief) : prev,
+                    );
+                    setAggregateSnapshot((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            agents: prev.agents.map((a) => ({
+                              ...a,
+                              inv: a.inv
+                                ? patchEntryBriefInInventory(a.inv, srcId, locale, brief)
+                                : null,
+                            })),
+                            projects: prev.projects.map((p) => ({
+                              ...p,
+                              inv: p.inv
+                                ? patchEntryBriefInInventory(p.inv, srcId, locale, brief)
+                                : null,
+                            })),
+                          }
+                        : prev,
+                    );
+                    setShellToast({
+                      at: Date.now(),
+                      message: locale === "zh" ? "已重新生成简介" : "Brief regenerated",
+                    });
+                  })();
+                }}
+              >
+                {locale === "zh" ? "重新生成简介" : "Regenerate brief"}
               </button>
               {cardContextMenu.row.kind === "skill" &&
               cardContextMenu.row.sourcePath?.trim() ? (
@@ -1153,7 +1284,7 @@ export default function SkillBrowseShell({
                       setCardContextMenu(null);
                     }}
                   >
-                    复制到…
+                    {locale === "zh" ? "复制到…" : "Copy to…"}
                   </button>
                   {skillBrowsePathIsDeletableFolder(
                     cardContextMenu.row.sourcePath?.trim() ?? "",
@@ -1167,25 +1298,27 @@ export default function SkillBrowseShell({
                       const p = row.sourcePath?.trim();
                       if (!p) return;
                       const ok = window.confirm(
-                        `确定要删除技能文件夹「${row.title}」吗？将删除整个文件夹及其中的文件，且无法撤销。`,
+                        locale === "zh"
+                          ? `确定要删除技能文件夹「${row.title}」吗？将删除整个文件夹及其中的文件，且无法撤销。`
+                          : `Delete skill folder "${row.title}"? This removes all files and cannot be undone.`,
                       );
                       setCardContextMenu(null);
                       if (!ok) return;
                       void (async () => {
                         const r = await deleteSkillAtPath(p);
                         if ("error" in r) {
-                          window.alert(`删除失败：${r.error}`);
+                          window.alert(`${locale === "zh" ? "删除失败" : "Delete failed"}: ${r.error}`);
                           return;
                         }
                         setSelectedEntry((cur) =>
                           cur?.path?.trim() === p ? null : cur,
                         );
-                        setShellToast({ at: Date.now(), message: "已删除" });
+                        setShellToast({ at: Date.now(), message: locale === "zh" ? "已删除" : "Deleted" });
                         onRefreshInventory();
                       })();
                     }}
                   >
-                    删除…
+                    {locale === "zh" ? "删除…" : "Delete…"}
                   </button>
                   ) : null}
                 </>
@@ -1212,10 +1345,10 @@ export default function SkillBrowseShell({
                   });
                   setSkillCopyTargetModalRow(null);
                   if ("error" in r) {
-                    window.alert(`复制失败：${r.error}`);
+                    window.alert(`${locale === "zh" ? "复制失败" : "Copy failed"}: ${r.error}`);
                     return;
                   }
-                  setShellToast({ at: Date.now(), message: "复制成功" });
+                  setShellToast({ at: Date.now(), message: locale === "zh" ? "复制成功" : "Copied" });
                 })();
               }}
             />,
@@ -1250,15 +1383,25 @@ export default function SkillBrowseShell({
         <p className="muted" style={{ marginTop: "1rem" }}>
           {dataSet === "project"
             ? !projectRoot
-              ? "请先通过侧栏「添加项目」选择文件夹。"
+              ? locale === "zh"
+                ? "请先通过侧栏「添加项目」选择文件夹。"
+                : "Please add a project folder from the sidebar first."
               : projectFailed
                 ? null
-                : "所选目录下未发现条目，或没有符合当前筛选的结果。"
+                : locale === "zh"
+                  ? "所选目录下未发现条目，或没有符合当前筛选的结果。"
+                  : "No entries found in selected directory, or no matches for current filters."
             : dataSet === "aggregate"
-              ? "未发现任何条目，或没有符合当前筛选的结果。"
+              ? locale === "zh"
+                ? "未发现任何条目，或没有符合当前筛选的结果。"
+                : "No entries found, or no matches for current filters."
               : ecosystem && dataSet === "skills"
-                ? "没有符合条件的全局条目。"
-                : "没有符合当前筛选条件的条目。"}
+                ? locale === "zh"
+                  ? "没有符合条件的全局条目。"
+                  : "No matching global entries."
+                : locale === "zh"
+                  ? "没有符合当前筛选条件的条目。"
+                  : "No entries match current filters."}
         </p>
       ) : null}
     </>

@@ -50,11 +50,31 @@ export async function deepseekClassifyInventory(
 /** 对已加载库存中尚未写入本地缓存的条目调用 DeepSeek 生成中文缩略介绍。 */
 export async function deepseekSummarizeInventory(
   inventory: AgentInventory,
+  locale: "zh" | "en" = "zh",
 ): Promise<AgentInventory | null> {
   try {
     return await invoke<AgentInventory>("deepseek_summarize_inventory", {
       inventory,
+      locale,
     });
+  } catch {
+    return null;
+  }
+}
+
+export async function deepseekResummarizeAsset(
+  asset: {
+    id: string;
+    kind: string;
+    title: string;
+    description: string;
+    path: string;
+    active: boolean;
+  },
+  locale: "zh" | "en" = "zh",
+): Promise<string | null> {
+  try {
+    return await invoke<string>("deepseek_resummarize_asset", { asset, locale });
   } catch {
     return null;
   }

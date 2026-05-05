@@ -26,6 +26,7 @@ import { PageRefreshButton } from "../components/PageRefreshButton";
 import HomeGiteeSyncHud from "../components/HomeGiteeSyncHud";
 import { buildCopySkillMenuSections } from "../skillCopyTargets";
 import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
+import { useI18n } from "../i18n/provider";
 
 type Props = {
   title: string;
@@ -80,6 +81,7 @@ type PendingGithubImport = {
 };
 
 export default function ShellPage({ subtitle }: Props) {
+  const { locale } = useI18n();
   const navigate = useNavigate();
   const projectPaths = useProjectPaths();
   const [githubRepoUrl, setGithubRepoUrl] = useState("");
@@ -186,7 +188,7 @@ export default function ShellPage({ subtitle }: Props) {
             nextProjectStats[root] = {
               ...summarizeInventory(inv),
               status: "ok",
-              topAgent: topBucket ? fallbackAgentLabel(topBucket.agentId) : "未识别",
+              topAgent: topBucket ? fallbackAgentLabel(topBucket.agentId) : locale === "zh" ? "未识别" : "Unknown",
             };
           } else {
             nextProjectStats[root] = {
@@ -194,7 +196,7 @@ export default function ShellPage({ subtitle }: Props) {
               mcp: 0,
               rules: 0,
               status: "error",
-              topAgent: "扫描失败",
+              topAgent: locale === "zh" ? "扫描失败" : "Scan failed",
             };
           }
         }
@@ -218,7 +220,7 @@ export default function ShellPage({ subtitle }: Props) {
 
   const formatProjectLatestUpdate = (root: string): string => {
     const ms = projectLatestMtimeMs[root];
-    if (ms == null) return "最近修改：—";
+    if (ms == null) return locale === "zh" ? "最近修改：—" : "Updated: —";
     const dt = new Date(ms);
     const pad2 = (n: number) => String(n).padStart(2, "0");
     const yy = pad2(dt.getFullYear() % 100);
@@ -232,12 +234,12 @@ export default function ShellPage({ subtitle }: Props) {
   const metrics = useMemo(
     () => [
       { key: "agent", label: "Agent", value: String(detectedAgents.length) },
-      { key: "project", label: "项目", value: String(projectPaths.length) },
+      { key: "project", label: locale === "zh" ? "项目" : "Projects", value: String(projectPaths.length) },
       { key: "skills", label: "Skills", value: totals.skills.toLocaleString() },
       { key: "mcp", label: "MCP", value: totals.mcp.toLocaleString() },
       { key: "rules", label: "Rules", value: totals.rules.toLocaleString() },
     ],
-    [detectedAgents.length, projectPaths.length, totals],
+    [detectedAgents.length, projectPaths.length, totals, locale],
   );
 
   const recentProjects = useMemo(
@@ -246,7 +248,7 @@ export default function ShellPage({ subtitle }: Props) {
         const stat = projectStats[path];
         const assetCount = (stat?.skills ?? 0) + (stat?.mcp ?? 0) + (stat?.rules ?? 0);
         const topAgent =
-          detectedAgents.length > 0 ? fallbackAgentLabel(detectedAgents[0].id) : "未识别";
+          detectedAgents.length > 0 ? fallbackAgentLabel(detectedAgents[0].id) : locale === "zh" ? "未识别" : "Unknown";
         return {
           name: folderBasename(path),
           path,
@@ -254,10 +256,10 @@ export default function ShellPage({ subtitle }: Props) {
           mcp: stat?.mcp ?? 0,
           rules: stat?.rules ?? 0,
           agent: stat?.topAgent ?? topAgent,
-          updated: stat?.status === "error" ? "扫描失败" : formatProjectLatestUpdate(path),
+          updated: stat?.status === "error" ? (locale === "zh" ? "扫描失败" : "Scan failed") : formatProjectLatestUpdate(path),
         };
       }),
-    [detectedAgents, projectPaths, projectStats, projectLatestMtimeMs],
+    [detectedAgents, projectPaths, projectStats, projectLatestMtimeMs, locale],
   );
 
   const renderMetricIcon = (key: string) => {
@@ -335,7 +337,7 @@ export default function ShellPage({ subtitle }: Props) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
         multiple: false,
-        title: "选择用于打开该项目的应用程序",
+        title: locale === "zh" ? "选择用于打开该项目的应用程序" : "Choose app for this project",
       });
       if (selected === null) return;
       const appPath = Array.isArray(selected) ? selected[0] : selected;
@@ -344,7 +346,9 @@ export default function ShellPage({ subtitle }: Props) {
       }
     } catch {
       const manual = window.prompt(
-        "请输入应用程序的完整路径（例如 /Applications/Cursor.app）：",
+        locale === "zh"
+          ? "请输入应用程序的完整路径（例如 /Applications/Cursor.app）："
+          : "Enter full app path (e.g. /Applications/Cursor.app):",
       );
       const trimmed = manual?.trim();
       if (trimmed) setOpenAppForProject(projectPath, trimmed);
@@ -368,11 +372,11 @@ export default function ShellPage({ subtitle }: Props) {
       const detected = await detectGithubRepoSkills(normalized);
       setGithubImportBusy(false);
       if ("error" in detected) {
-        window.alert(`识别失败：${detected.error}`);
+        window.alert(`${locale === "zh" ? "识别失败" : "Detection failed"}: ${detected.error}`);
         return;
       }
       if (detected.skills.length === 0) {
-        window.alert("未识别到 Skill（未找到 SKILL.md）");
+        window.alert(locale === "zh" ? "未识别到 Skill（未找到 SKILL.md）" : "No Skill detected (SKILL.md not found)");
         return;
       }
       if (detected.skills.length === 1) {
@@ -501,19 +505,23 @@ export default function ShellPage({ subtitle }: Props) {
             onClick={onRefreshHome}
             disabled={homeScanBusy}
             spinning={homeScanBusy}
-            label="重新扫描并加载"
+            label={locale === "zh" ? "重新扫描并加载" : "Rescan and reload"}
           />
         </div>
         <div className="home-board-hero__content">
           <h1 className="home-board-hello">
-            下午好，Controler <span aria-hidden>👋</span>
+            {locale === "zh" ? "下午好，Controler" : "Good afternoon, Controller"} <span aria-hidden>👋</span>
           </h1>
           <p className="home-board-lead">
             {subtitle ??
-              `AIControls 已识别到 ${detectedAgents.length} 个 Agent，${projectPaths.length} 个项目`}
+              locale === "zh"
+                ? `AIControls 已识别到 ${detectedAgents.length} 个 Agent，${projectPaths.length} 个项目`
+                : `AIControls detected ${detectedAgents.length} agents and ${projectPaths.length} projects`}
           </p>
           <p className="home-board-sub">
-            聚合了 {totals.skills.toLocaleString()} 个 Skills，{totals.mcp.toLocaleString()} 个 MCP，{totals.rules.toLocaleString()} 条 Rules
+            {locale === "zh"
+              ? `聚合了 ${totals.skills.toLocaleString()} 个 Skills，${totals.mcp.toLocaleString()} 个 MCP，${totals.rules.toLocaleString()} 条 Rules`
+              : `Aggregated ${totals.skills.toLocaleString()} skills, ${totals.mcp.toLocaleString()} MCP, and ${totals.rules.toLocaleString()} rules`}
           </p>
         </div>
         <div className="home-board-visual" aria-hidden>
@@ -521,13 +529,15 @@ export default function ShellPage({ subtitle }: Props) {
         </div>
       </header>
 
-      <section className="home-board-metrics" aria-label="统计概览">
+      <section className="home-board-metrics" aria-label={locale === "zh" ? "统计概览" : "Stats overview"}>
         {metrics.map((item) => {
           const to = assetsPathForHomeMetric(item.key);
           const navTitle =
             item.key === "skills" || item.key === "mcp" || item.key === "rules"
               ? `前往「全部」资产页（${item.label}）`
-              : "前往「全部」资产页";
+              : locale === "zh"
+                ? "前往「全部」资产页"
+                : "Go to Assets page";
           return (
             <article
               key={item.label}
@@ -555,7 +565,7 @@ export default function ShellPage({ subtitle }: Props) {
         })}
       </section>
 
-      <section className="home-board-github-import" aria-label="从 GitHub 导入 Skill">
+      <section className="home-board-github-import" aria-label={locale === "zh" ? "从 GitHub 导入 Skill" : "Import Skill from GitHub"}>
         <div className="home-board-github-import__head">
           <span className="home-board-github-import__icon" aria-hidden>
             <svg viewBox="0 0 24 24">
@@ -566,9 +576,11 @@ export default function ShellPage({ subtitle }: Props) {
             </svg>
           </span>
           <div>
-            <p className="home-board-github-import__title">从 GitHub 导入 Skill</p>
+            <p className="home-board-github-import__title">{locale === "zh" ? "从 GitHub 导入 Skill" : "Import Skill from GitHub"}</p>
             <p className="home-board-github-import__desc">
-              粘贴 GitHub 仓库链接，自动识别并导入 Skill 到你的库中
+              {locale === "zh"
+                ? "粘贴 GitHub 仓库链接，自动识别并导入 Skill 到你的库中"
+                : "Paste a GitHub repo URL to detect and import skills"}
             </p>
           </div>
         </div>
@@ -582,7 +594,7 @@ export default function ShellPage({ subtitle }: Props) {
             }}
             className="home-board-github-import__input"
             placeholder="https://github.com/username/repo"
-            aria-label="GitHub 仓库链接"
+            aria-label={locale === "zh" ? "GitHub 仓库链接" : "GitHub repository URL"}
           />
           <button
             type="button"
@@ -590,14 +602,14 @@ export default function ShellPage({ subtitle }: Props) {
             onClick={onImportGithubSkill}
             disabled={githubRepoUrl.trim().length === 0 || githubImportBusy}
           >
-            {githubImportBusy ? "识别中…" : "导入 Skill"}
+            {githubImportBusy ? (locale === "zh" ? "识别中…" : "Detecting…") : locale === "zh" ? "导入 Skill" : "Import Skill"}
           </button>
         </div>
       </section>
 
-      <section className="home-board-projects" aria-label="最近项目">
+      <section className="home-board-projects" aria-label={locale === "zh" ? "最近项目" : "Recent projects"}>
         <div className="home-board-section-head">
-          <h2>最近项目</h2>
+          <h2>{locale === "zh" ? "最近项目" : "Recent projects"}</h2>
         </div>
         <div className="home-board-project-grid">
           {recentProjects.map((project) => (

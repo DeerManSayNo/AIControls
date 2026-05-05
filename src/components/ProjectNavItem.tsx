@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useNavigate } from "react-router-dom";
+import { useI18n } from "../i18n/provider";
 import { revealPathInFolder } from "../api/reveal";
 import { removeProjectPath } from "../projectPathsStorage";
 import { NavIconFolder } from "./navIcons";
 
 function folderBasename(path: string): string {
-  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "Project";
 }
 
 type Props = {
@@ -15,6 +16,7 @@ type Props = {
 };
 
 export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
+  const { locale } = useI18n();
   const navigate = useNavigate();
   const to = `/project?path=${encodeURIComponent(projectPath)}`;
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -47,10 +49,12 @@ export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
   const closeMenu = () => setMenu(null);
 
   const handleRemove = () => {
+    const msg =
+      locale === "zh"
+        ? `从侧栏移除「${folderBasename(projectPath)}」？\n不会删除磁盘上的文件夹。`
+        : `Remove "${folderBasename(projectPath)}" from sidebar?\nThis will not delete files on disk.`;
     if (
-      !window.confirm(
-        `从侧栏移除「${folderBasename(projectPath)}」？\n不会删除磁盘上的文件夹。`,
-      )
+      !window.confirm(msg)
     ) {
       return;
     }
@@ -92,7 +96,7 @@ export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
                 zIndex: 10_000,
               }}
               role="menu"
-              aria-label="项目操作"
+              aria-label={locale === "zh" ? "项目操作" : "Project actions"}
             >
               <button
                 type="button"
@@ -103,7 +107,7 @@ export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
                   closeMenu();
                 }}
               >
-                打开所在目录
+                {locale === "zh" ? "打开所在目录" : "Open containing folder"}
               </button>
               <button
                 type="button"
@@ -111,7 +115,7 @@ export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
                 className="card-context-menu__item card-context-menu__item--danger"
                 onClick={handleRemove}
               >
-                删除项目
+                {locale === "zh" ? "删除项目" : "Remove project"}
               </button>
             </div>,
             document.body,

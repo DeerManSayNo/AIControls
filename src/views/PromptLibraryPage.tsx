@@ -7,12 +7,20 @@ import {
   type PromptLibraryFile,
   type PromptType,
 } from "../api/prompts";
+import { useI18n } from "../i18n/provider";
 
 const TYPE_META: Record<PromptType, { label: string; rootName: string }> = {
   image: { label: "图片", rootName: "图片" },
   code: { label: "代码", rootName: "代码" },
   doc: { label: "文档", rootName: "文档" },
   text: { label: "纯文本", rootName: "纯文本" },
+};
+
+const TYPE_LABEL_EN: Record<PromptType, string> = {
+  image: "Image",
+  code: "Code",
+  doc: "Document",
+  text: "Text",
 };
 
 type Toast = { message: string; kind: "success" | "error" };
@@ -34,6 +42,9 @@ function ensureRootFolders(lib: PromptLibraryFile): PromptLibraryFile {
 }
 
 export default function PromptLibraryPage() {
+  const { locale } = useI18n();
+  const typeLabel = (t: PromptType) => (locale === "zh" ? TYPE_META[t].label : TYPE_LABEL_EN[t]);
+
   const [library, setLibrary] = useState<PromptLibraryFile>(emptyLibrary());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -226,29 +237,29 @@ export default function PromptLibraryPage() {
     const outputExample = newItem.outputExample.trim();
     const relatedLink = newItem.relatedLink.trim();
     if (!title) {
-      setToast({ kind: "error", message: "请填写标题" });
+      setToast({ kind: "error", message: locale === "zh" ? "请填写标题" : "Please enter a title" });
       return;
     }
     if (outputType !== "image" && !prompt) {
-      setToast({ kind: "error", message: "请填写 Prompt" });
+      setToast({ kind: "error", message: locale === "zh" ? "请填写 Prompt" : "Please enter prompt" });
       return;
     }
     const prev =
       editingItemId !== null ? library.items.find((x) => x.id === editingItemId) ?? null : null;
     if (editingItemId !== null && !prev) {
-      setToast({ kind: "error", message: "条目不存在或已删除" });
+      setToast({ kind: "error", message: locale === "zh" ? "条目不存在或已删除" : "Item does not exist or was deleted" });
       closeCreateModal();
       return;
     }
     if (outputType === "image") {
       const imageUrl = newOutputImageDataUrl ?? (prev?.type === "image" ? (prev.imageDataUrl ?? null) : null);
       if (!imageUrl) {
-        setToast({ kind: "error", message: "请先粘贴图片输出示例" });
+        setToast({ kind: "error", message: locale === "zh" ? "请先粘贴图片输出示例" : "Please paste an image output example first" });
         return;
       }
     }
     if (outputType !== "image" && !outputExample) {
-      setToast({ kind: "error", message: "请先粘贴输出示例内容" });
+      setToast({ kind: "error", message: locale === "zh" ? "请先粘贴输出示例内容" : "Please paste output example first" });
       return;
     }
 
@@ -278,7 +289,7 @@ export default function PromptLibraryPage() {
       closeCreateModal();
       setActiveType(outputType);
       setActiveFolderId(outputType);
-      setToast({ kind: "success", message: "已保存修改" });
+      setToast({ kind: "success", message: locale === "zh" ? "已保存修改" : "Changes saved" });
       return;
     }
 
@@ -302,21 +313,21 @@ export default function PromptLibraryPage() {
     closeCreateModal();
     setActiveType(outputType);
     setActiveFolderId(outputType);
-    setToast({ kind: "success", message: "已保存" });
+    setToast({ kind: "success", message: locale === "zh" ? "已保存" : "Saved" });
   }
 
   async function onDeleteItem(id: string) {
     const next = { ...library, items: library.items.filter((x) => x.id !== id) };
     await persist(next);
-    setToast({ kind: "success", message: "已删除" });
+    setToast({ kind: "success", message: locale === "zh" ? "已删除" : "Deleted" });
   }
 
   async function copyPrompt(prompt: string) {
     try {
       await navigator.clipboard.writeText(prompt);
-      setToast({ kind: "success", message: "已复制 Prompt" });
+      setToast({ kind: "success", message: locale === "zh" ? "已复制 Prompt" : "Prompt copied" });
     } catch {
-      setToast({ kind: "error", message: "复制失败" });
+      setToast({ kind: "error", message: locale === "zh" ? "复制失败" : "Copy failed" });
     }
   }
 
@@ -331,18 +342,18 @@ export default function PromptLibraryPage() {
         throw new Error("clipboard image write unsupported");
       }
       await navigator.clipboard.write([new ClipboardItemCtor({ [blob.type || "image/png"]: blob })]);
-      setToast({ kind: "success", message: "已复制图片" });
+      setToast({ kind: "success", message: locale === "zh" ? "已复制图片" : "Image copied" });
     } catch {
-      setToast({ kind: "error", message: "复制图片失败" });
+      setToast({ kind: "error", message: locale === "zh" ? "复制图片失败" : "Failed to copy image" });
     }
   }
 
   async function copyOutputExample(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setToast({ kind: "success", message: "已复制输出示例" });
+      setToast({ kind: "success", message: locale === "zh" ? "已复制输出示例" : "Output example copied" });
     } catch {
-      setToast({ kind: "error", message: "复制失败" });
+      setToast({ kind: "error", message: locale === "zh" ? "复制失败" : "Copy failed" });
     }
   }
 
@@ -378,12 +389,12 @@ export default function PromptLibraryPage() {
     const bytes = dataUrlByteLength(raw);
     if (bytes <= MAX_IMAGE_BYTES) {
       setNewOutputImageDataUrl(raw);
-      setToast({ kind: "success", message: "图片已粘贴" });
+      setToast({ kind: "success", message: locale === "zh" ? "图片已粘贴" : "Image pasted" });
       return;
     }
     const compressed = await compressDataUrlToMax(raw, MAX_IMAGE_BYTES);
     setNewOutputImageDataUrl(compressed);
-    setToast({ kind: "success", message: "图片已压缩并粘贴" });
+    setToast({ kind: "success", message: locale === "zh" ? "图片已压缩并粘贴" : "Image compressed and pasted" });
   }
 
   async function onPasteOutputExample(e: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -396,36 +407,36 @@ export default function PromptLibraryPage() {
     try {
       await loadPastedImageData(file);
     } catch {
-      setToast({ kind: "error", message: "图片处理失败" });
+      setToast({ kind: "error", message: locale === "zh" ? "图片处理失败" : "Image processing failed" });
     }
   }
 
-  if (loading) return <p className="muted">正在加载 Prompt 库…</p>;
+  if (loading) return <p className="muted">{locale === "zh" ? "正在加载 Prompt 库…" : "Loading prompt library…"}</p>;
 
   return (
     <div className="prompt-lib">
       <div className="page-header">
         <div className="page-header__title-bar">
           <div className="page-title__row">
-            <h2>Prompt 库</h2>
+            <h2>{locale === "zh" ? "Prompt 库" : "Prompt Library"}</h2>
             <span className="count-badge">{library.items.length}</span>
           </div>
           <button onClick={openCreateModal} disabled={saving}>
-            + 新建收藏
+            {locale === "zh" ? "+ 新建收藏" : "+ New Item"}
           </button>
         </div>
       </div>
 
       <div className="toolbar">
         <div className="toolbar__left">
-          <div className="seg" role="tablist" aria-label="Prompt 类型">
+          <div className="seg" role="tablist" aria-label={locale === "zh" ? "Prompt 类型" : "Prompt type"}>
             {(Object.keys(TYPE_META) as PromptType[]).map((t) => (
               <button
                 key={t}
                 className={`seg__item${activeType === t ? " active" : ""}`}
                 onClick={() => switchType(t)}
               >
-                {TYPE_META[t].label}
+                {typeLabel(t)}
               </button>
             ))}
           </div>
@@ -445,7 +456,7 @@ export default function PromptLibraryPage() {
               className="search__input"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索标题 / Prompt / 输出示例"
+              placeholder={locale === "zh" ? "搜索标题 / Prompt / 输出示例" : "Search title / prompt / output example"}
             />
           </label>
         </div>
@@ -454,7 +465,7 @@ export default function PromptLibraryPage() {
       <div className="prompt-lib__layout">
         <section className="prompt-lib__browse">
           {filteredItems.length === 0 ? (
-            <p className="muted">当前分类暂无收藏</p>
+            <p className="muted">{locale === "zh" ? "当前分类暂无收藏" : "No items in this category"}</p>
           ) : (
             <div className="prompt-lib__masonry">
               {masonryColumns.map((columnItems, columnIndex) => (
@@ -465,7 +476,7 @@ export default function PromptLibraryPage() {
                       className={`prompt-lib__masonry-card${item.type === "image" ? "" : " prompt-lib__masonry-card--text-output"}`}
                       onContextMenu={(e) => onMasonryCardContextMenu(e, item)}
                     >
-                      <MasonryCardOutput item={item} />
+                      <MasonryCardOutput item={item} locale={locale} />
                       <div className="prompt-lib__masonry-body">
                         <h3 className="prompt-lib__masonry-title" title={item.title}>
                           {item.title}
@@ -483,7 +494,13 @@ export default function PromptLibraryPage() {
                             void copyPrompt(item.prompt);
                           }}
                         >
-                          {item.type === "image" && !item.prompt.trim() ? "复制图片" : "复制 Prompt"}
+                          {item.type === "image" && !item.prompt.trim()
+                            ? locale === "zh"
+                              ? "复制图片"
+                              : "Copy image"
+                            : locale === "zh"
+                              ? "复制 Prompt"
+                              : "Copy prompt"}
                         </button>
                       </div>
                     </article>
@@ -512,19 +529,29 @@ export default function PromptLibraryPage() {
                 <header className="prompt-create-modal__header">
                   <div className="prompt-create-modal__header-text">
                     <h2 id="prompt-editor-title" className="prompt-create-modal__title">
-                      {editingItemId ? "编辑收藏" : "新建收藏"}
+                      {editingItemId
+                        ? locale === "zh"
+                          ? "编辑收藏"
+                          : "Edit item"
+                        : locale === "zh"
+                          ? "新建收藏"
+                          : "New item"}
                     </h2>
                     <p className="prompt-create-modal__subtitle">
                       {editingItemId
-                        ? "修改标题、Prompt、输出类型或示例后保存。"
-                        : "保存输出示例与相关信息，便于复制与对照。"}
+                        ? locale === "zh"
+                          ? "修改标题、Prompt、输出类型或示例后保存。"
+                          : "Update title, prompt, output type or example, then save."
+                        : locale === "zh"
+                          ? "保存输出示例与相关信息，便于复制与对照。"
+                          : "Save examples and metadata for quick reuse."}
                     </p>
                   </div>
                   <button
                     type="button"
                     className="prompt-create-modal__close"
                     onClick={() => closeCreateModal()}
-                    aria-label="关闭"
+                    aria-label={locale === "zh" ? "关闭" : "Close"}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
                       <path
@@ -548,20 +575,20 @@ export default function PromptLibraryPage() {
                   <div className="prompt-create-modal__body">
                     <div className="prompt-create-modal__cluster">
                       <label className="prompt-create-modal__field" htmlFor="pcm-title">
-                        <span className="prompt-create-modal__label">标题</span>
+                        <span className="prompt-create-modal__label">{locale === "zh" ? "标题" : "Title"}</span>
                         <input
                           ref={createTitleInputRef}
                           id="pcm-title"
                           className="prompt-create-modal__input"
                           value={newItem.title}
                           onChange={(e) => setNewItem((v) => ({ ...v, title: e.target.value }))}
-                          placeholder="简要命名这条收藏"
+                          placeholder={locale === "zh" ? "简要命名这条收藏" : "Give this item a concise title"}
                           autoComplete="off"
                         />
                       </label>
                       <div className="prompt-create-modal__field prompt-create-modal__field--flush">
                         <span className="prompt-create-modal__label" id="pcm-output-type-label">
-                          输出类型
+                          {locale === "zh" ? "输出类型" : "Output type"}
                         </span>
                         <div
                           className="prompt-create-modal__type-row"
@@ -603,7 +630,7 @@ export default function PromptLibraryPage() {
                               <span className="prompt-create-modal__type-icon" aria-hidden>
                                 <OutputTypeGlyph type={t} />
                               </span>
-                              <span className="prompt-create-modal__type-label">{TYPE_META[t].label}</span>
+                              <span className="prompt-create-modal__type-label">{typeLabel(t)}</span>
                             </button>
                           ))}
                         </div>
@@ -620,7 +647,7 @@ export default function PromptLibraryPage() {
                         rows={6}
                         value={newItem.prompt}
                         onChange={(e) => setNewItem((v) => ({ ...v, prompt: e.target.value }))}
-                        placeholder="完整指令内容"
+                        placeholder={locale === "zh" ? "完整指令内容" : "Full prompt content"}
                         spellCheck={false}
                       />
                     </label>
@@ -630,7 +657,7 @@ export default function PromptLibraryPage() {
                     {newItem.outputType === "image" ? (
                       <div className="prompt-create-modal__field">
                         <span className="prompt-create-modal__label" id="pcm-image-example-label">
-                          输出示例（图片）
+                          {locale === "zh" ? "输出示例（图片）" : "Output example (image)"}
                         </span>
                         <div
                           className={`prompt-create-modal__paste-board${
@@ -640,13 +667,19 @@ export default function PromptLibraryPage() {
                           <textarea
                             className="prompt-create-modal__paste-target"
                             rows={2}
-                            placeholder="聚焦后粘贴截图（⌘V / Ctrl+V）"
+                            placeholder={
+                              locale === "zh"
+                                ? "聚焦后粘贴截图（⌘V / Ctrl+V）"
+                                : "Focus here and paste screenshot (⌘V / Ctrl+V)"
+                            }
                             onPaste={(e) => void onPasteOutputExample(e)}
                             aria-labelledby="pcm-image-example-label"
                           />
                           {!newOutputImageDataUrl ? (
                             <p className="prompt-create-modal__paste-hint">
-                              支持从浏览器或设计工具粘贴；体积过大会自动压缩。
+                              {locale === "zh"
+                                ? "支持从浏览器或设计工具粘贴；体积过大会自动压缩。"
+                                : "Paste from browser/design tools; oversized images are compressed automatically."}
                             </p>
                           ) : null}
                         </div>
@@ -654,7 +687,7 @@ export default function PromptLibraryPage() {
                           <div className="prompt-create-modal__preview-wrap">
                             <img
                               src={newOutputImageDataUrl}
-                              alt="已粘贴的输出示例预览"
+                              alt={locale === "zh" ? "已粘贴的输出示例预览" : "Pasted output example preview"}
                               className="prompt-create-modal__preview-img"
                             />
                           </div>
@@ -662,14 +695,18 @@ export default function PromptLibraryPage() {
                       </div>
                     ) : (
                       <label className="prompt-create-modal__field" htmlFor="pcm-output-example">
-                        <span className="prompt-create-modal__label">输出示例</span>
+                        <span className="prompt-create-modal__label">{locale === "zh" ? "输出示例" : "Output example"}</span>
                         <textarea
                           id="pcm-output-example"
                           className="prompt-create-modal__textarea"
                           rows={4}
                           value={newItem.outputExample}
                           onChange={(e) => setNewItem((v) => ({ ...v, outputExample: e.target.value }))}
-                          placeholder="一段代表性的文本、代码或文档片段"
+                          placeholder={
+                            locale === "zh"
+                              ? "一段代表性的文本、代码或文档片段"
+                              : "A representative text, code, or document snippet"
+                          }
                           spellCheck={false}
                         />
                       </label>
@@ -679,7 +716,10 @@ export default function PromptLibraryPage() {
 
                     <label className="prompt-create-modal__field" htmlFor="pcm-link">
                       <span className="prompt-create-modal__label">
-                        相关链接 <span className="prompt-create-modal__label-optional">选填</span>
+                        {locale === "zh" ? "相关链接" : "Related link"}{" "}
+                        <span className="prompt-create-modal__label-optional">
+                          {locale === "zh" ? "选填" : "optional"}
+                        </span>
                       </span>
                       <input
                         id="pcm-link"
@@ -694,7 +734,9 @@ export default function PromptLibraryPage() {
                   </div>
 
                   <footer className="prompt-create-modal__footer">
-                    <span className="prompt-create-modal__kbd-hint">Esc 关闭</span>
+                    <span className="prompt-create-modal__kbd-hint">
+                      {locale === "zh" ? "Esc 关闭" : "Esc to close"}
+                    </span>
                     <div className="prompt-create-modal__actions">
                       <button
                         type="button"
@@ -702,10 +744,10 @@ export default function PromptLibraryPage() {
                         onClick={() => closeCreateModal()}
                         disabled={saving}
                       >
-                        取消
+                        {locale === "zh" ? "取消" : "Cancel"}
                       </button>
                       <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
-                        保存
+                        {locale === "zh" ? "保存" : "Save"}
                       </button>
                     </div>
                   </footer>
@@ -728,7 +770,7 @@ export default function PromptLibraryPage() {
                 zIndex: 10_000,
               }}
               role="menu"
-              aria-label="收藏操作"
+              aria-label={locale === "zh" ? "收藏操作" : "Item actions"}
             >
               <button
                 type="button"
@@ -741,7 +783,7 @@ export default function PromptLibraryPage() {
                   openEditModal(item);
                 }}
               >
-                编辑
+                {locale === "zh" ? "编辑" : "Edit"}
               </button>
               <button
                 type="button"
@@ -760,8 +802,12 @@ export default function PromptLibraryPage() {
                 }}
               >
                 {cardContextMenu.item.type === "image" && !cardContextMenu.item.prompt.trim()
-                  ? "复制图片"
-                  : "复制 Prompt"}
+                  ? locale === "zh"
+                    ? "复制图片"
+                    : "Copy image"
+                  : locale === "zh"
+                    ? "复制 Prompt"
+                    : "Copy prompt"}
               </button>
               {cardContextMenu.item.type !== "image" && cardContextMenu.item.outputExample?.trim() ? (
                 <button
@@ -775,7 +821,7 @@ export default function PromptLibraryPage() {
                     void copyOutputExample(ex);
                   }}
                 >
-                  复制输出示例
+                  {locale === "zh" ? "复制输出示例" : "Copy output example"}
                 </button>
               ) : null}
               <button
@@ -789,7 +835,7 @@ export default function PromptLibraryPage() {
                   void onDeleteItem(id);
                 }}
               >
-                删除
+                {locale === "zh" ? "删除" : "Delete"}
               </button>
             </div>,
             document.body,
@@ -808,17 +854,21 @@ export default function PromptLibraryPage() {
   );
 }
 
-function MasonryCardOutput({ item }: { item: PromptItem }) {
+function MasonryCardOutput({ item, locale }: { item: PromptItem; locale: "zh" | "en" }) {
   if (item.type === "image") {
     return item.imageDataUrl ? (
       <img src={item.imageDataUrl} alt={item.title} className="prompt-lib__masonry-image" />
     ) : (
-      <div className="prompt-lib__masonry-fallback">暂无图片</div>
+      <div className="prompt-lib__masonry-fallback">{locale === "zh" ? "暂无图片" : "No image"}</div>
     );
   }
   const raw = (item.outputExample ?? "").trim();
   if (!raw) {
-    return <div className="prompt-lib__masonry-fallback">暂无输出示例</div>;
+    return (
+      <div className="prompt-lib__masonry-fallback">
+        {locale === "zh" ? "暂无输出示例" : "No output example"}
+      </div>
+    );
   }
   const kind = item.type === "code" ? "code" : item.type === "doc" ? "doc" : "text";
   return (

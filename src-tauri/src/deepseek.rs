@@ -139,8 +139,9 @@ collab — 团队沟通、项目管理、会议与任务协同等
         .to_string()
 }
 
-fn summarize_system_prompt() -> String {
-    r#"你是 AIControls 的资产缩略介绍助手。输入是多条 Skill / MCP / Rule 的条目信息。
+fn summarize_system_prompt(locale: &str) -> String {
+    if locale == "zh" {
+        r#"你是 AIControls 的资产缩略介绍助手。输入是多条 Skill / MCP / Rule 的条目信息。
 请为每条生成中文缩略介绍，并严格遵守：
 1) 每条最多 100 个中文字符；
 2) 只基于给定 title/description/kind，禁止编造未给出的事实；
@@ -148,7 +149,18 @@ fn summarize_system_prompt() -> String {
 4) 不使用 Markdown，不加序号，不输出额外解释。
 
 只输出一个 JSON 对象：键为条目 id（字符串），值为缩略介绍（字符串）。"#
-        .to_string()
+            .to_string()
+    } else {
+        r#"You are an AIControls asset brief assistant. Input includes Skill / MCP / Rule entries.
+Generate concise English briefs and follow:
+1) each brief <= 100 characters;
+2) only use given title/description/kind, no fabrication;
+3) neutral tone, high information density, 1-2 sentences;
+4) no markdown, no numbering, no extra explanations.
+
+Output exactly one JSON object: key is entry id (string), value is brief text (string)."#
+            .to_string()
+    }
 }
 
 async fn classify_batch(
@@ -237,9 +249,22 @@ fn normalize_brief_text(raw: &str) -> Option<String> {
     Some(cut)
 }
 
+fn has_cjk(s: &str) -> bool {
+    s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+}
+
+fn is_brief_compatible_locale(locale: &str, brief: &str) -> bool {
+    if locale == "zh" {
+        has_cjk(brief)
+    } else {
+        !has_cjk(brief)
+    }
+}
+
 async fn summarize_batch(
     api_key: &str,
     batch: &[AssetEntry],
+    locale: &str,
 ) -> Result<HashMap<String, String>, String> {
     let mut lines = Vec::new();
     for e in batch {
@@ -251,11 +276,18 @@ async fn summarize_batch(
             serde_json::to_string(&e.description).map_err(|e| e.to_string())?,
         ));
     }
-    let user = format!(
-        "请为下列条目生成中文缩略介绍（输出 JSON 对象 id→brief）：\n{}",
-        lines.join("\n")
-    );
-    let raw = chat_completion(api_key, &summarize_system_prompt(), &user, true, 1400).await?;
+    let user = if locale == "zh" {
+        format!(
+            "请为下列条目生成中文缩略介绍（输出 JSON 对象 id→brief）：\n{}",
+            lines.join("\n")
+        )
+    } else {
+        format!(
+            "Generate English briefs for entries below (output JSON object id->brief):\n{}",
+            lines.join("\n")
+        )
+    };
+    let raw = chat_completion(api_key, &summarize_system_prompt(locale), &user, true, 1400).await?;
     let v = extract_json_object(&raw)?;
     let obj = v
         .as_object()
@@ -276,13 +308,14 @@ async fn summarize_batch(
 async fn summarize_batch_fill_missing(
     api_key: &str,
     chunk: &[AssetEntry],
+    locale: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let mut delta = summarize_batch(api_key, chunk).await?;
+    let mut delta = summarize_batch(api_key, chunk, locale).await?;
     for e in chunk {
         if delta.contains_key(&e.id) {
             continue;
         }
-        match summarize_batch(api_key, &[e.clone()]).await {
+        match summarize_batch(api_key, &[e.clone()], locale).await {
             Ok(m) => delta.extend(m),
             Err(_) => {
                 /* 单次失败则跳过该 id，下次扫描仍会尝试 */
@@ -337,14 +370,16 @@ pub async fn classify_inventory_missing(
 pub async fn summarize_inventory_missing(
     app: &AppHandle,
     mut inventory: AgentInventory,
+    locale: String,
 ) -> Result<AgentInventory, String> {
+    let locale = if locale == "zh" { "zh" } else { "en" };
     let api_key = match storage::load_deepseek_api_key(app)? {
         Some(k) if !k.is_empty() => k,
         _ => return Ok(inventory),
     };
 
-    let mut map = storage::load_brief_map(app).unwrap_or_default();
-    attach_briefs(&mut inventory, &map);
+    let mut map = storage::load_brief_map(app, locale).unwrap_or_default();
+    attach_briefs(&mut inventory, locale, &map);
 
     let mut seen = HashSet::<String>::new();
     let missing: Vec<AssetEntry> = inventory
@@ -352,7 +387,10 @@ pub async fn summarize_inventory_missing(
         .iter()
         .chain(inventory.mcp.iter())
         .chain(inventory.rules.iter())
-        .filter(|e| !map.contains_key(&e.id))
+        .filter(|e| match map.get(&e.id) {
+            Some(v) => !is_brief_compatible_locale(locale, v),
+            None => true,
+        })
         .filter(|e| seen.insert(e.id.clone()))
         .cloned()
         .collect();
@@ -363,15 +401,39 @@ pub async fn summarize_inventory_missing(
 
     const BATCH: usize = 8;
     for chunk in missing.chunks(BATCH) {
-        let delta = summarize_batch_fill_missing(&api_key, chunk).await?;
+        let delta = summarize_batch_fill_missing(&api_key, chunk, locale).await?;
         if !delta.is_empty() {
-            storage::merge_brief_map(app, &delta)?;
+            storage::merge_brief_map(app, locale, &delta)?;
             map.extend(delta);
-            attach_briefs(&mut inventory, &map);
+            attach_briefs(&mut inventory, locale, &map);
         }
     }
 
     Ok(inventory)
+}
+
+/// 强制为单条资产重新生成摘要（覆盖缓存），并返回更新后的摘要文本。
+pub async fn resummarize_single_asset(
+    app: &AppHandle,
+    asset: AssetEntry,
+    locale: String,
+) -> Result<String, String> {
+    let locale = if locale == "zh" { "zh" } else { "en" };
+    let api_key = storage::load_deepseek_api_key(app)?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+
+    let delta = summarize_batch(&api_key, &[asset.clone()], locale).await?;
+    let brief = delta
+        .get(&asset.id)
+        .cloned()
+        .ok_or_else(|| "模型未返回该条目的简介".to_string())?;
+
+    let mut one = HashMap::new();
+    one.insert(asset.id, brief.clone());
+    storage::merge_brief_map(app, locale, &one)?;
+
+    Ok(brief)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

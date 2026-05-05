@@ -34,6 +34,9 @@ pub struct AssetEntry {
     /// AI 生成的中文缩略介绍（<=100字）
     #[serde(default)]
     pub brief_zh: Option<String>,
+    /// AI 生成的英文缩略介绍（<=100 chars）
+    #[serde(default)]
+    pub brief_en: Option<String>,
     /// Skill 包目录内除主 `SKILL.md` 外的其他文件名（仅当 `path` 为技能文件夹时填充）
     #[serde(default)]
     pub skill_extra_files: Option<Vec<String>>,
@@ -59,7 +62,7 @@ pub fn attach_scenarios(inv: &mut AgentInventory, map: &HashMap<String, String>)
     }
 }
 
-pub fn attach_briefs(inv: &mut AgentInventory, map: &HashMap<String, String>) {
+pub fn attach_briefs(inv: &mut AgentInventory, locale: &str, map: &HashMap<String, String>) {
     for e in inv
         .skills
         .iter_mut()
@@ -67,7 +70,11 @@ pub fn attach_briefs(inv: &mut AgentInventory, map: &HashMap<String, String>) {
         .chain(inv.rules.iter_mut())
     {
         if let Some(s) = map.get(&e.id) {
-            e.brief_zh = Some(s.clone());
+            if locale == "zh" {
+                e.brief_zh = Some(s.clone());
+            } else {
+                e.brief_en = Some(s.clone());
+            }
         }
     }
 }
@@ -709,6 +716,7 @@ fn push_skills_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             active: true,
             scenario: None,
             brief_zh: None,
+            brief_en: None,
             skill_extra_files,
         });
     }
@@ -751,6 +759,7 @@ fn push_rules_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
             active: true,
             scenario: None,
             brief_zh: None,
+            brief_en: None,
             skill_extra_files: None,
         });
     }
@@ -816,6 +825,7 @@ fn parse_mcp_object_at(
             active: true,
             scenario: None,
             brief_zh: None,
+            brief_en: None,
             skill_extra_files: None,
         });
     }

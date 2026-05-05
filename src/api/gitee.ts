@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
+function isZhUi(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return navigator.language.toLowerCase().startsWith("zh");
+}
+
 export type GiteeSyncStatus = {
   connected: boolean;
   nextAutoCheckMs: number;
@@ -41,7 +46,7 @@ export async function saveGiteeApp(
 ): Promise<{ ok: boolean; message: string }> {
   try {
     await invoke("save_gitee_app", { clientId, clientSecret, repoName });
-    return { ok: true, message: "已保存。" };
+    return { ok: true, message: isZhUi() ? "已保存。" : "Saved." };
   } catch (e) {
     return {
       ok: false,
@@ -78,7 +83,7 @@ export async function giteeBackupNow(): Promise<{ ok: boolean; message: string }
 export async function giteeDisconnect(): Promise<{ ok: boolean; message: string }> {
   try {
     await invoke("gitee_disconnect");
-    return { ok: true, message: "已解除 Gitee 授权。" };
+    return { ok: true, message: isZhUi() ? "已解除 Gitee 授权。" : "Gitee authorization removed." };
   } catch (e) {
     return {
       ok: false,

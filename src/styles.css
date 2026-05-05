@@ -2156,6 +2156,62 @@ main {
   color: var(--text);
 }
 
+.settings-block-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  margin-bottom: 0.75rem;
+}
+
+.settings-block-head .settings-block-title {
+  margin: 0;
+}
+
+.settings-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.settings-info__icon {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.settings-info__tip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.5rem);
+  min-width: 20rem;
+  max-width: min(40rem, calc(100vw - 3.5rem));
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s var(--ease-out);
+  z-index: 20;
+}
+
+.settings-info:hover .settings-info__tip {
+  opacity: 1;
+}
+
 .settings-input {
   display: block;
   width: min(520px, 100%);
@@ -2469,8 +2525,10 @@ main {
 
 .skill-card:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 6px 16px rgba(0, 0, 0, 0.12);
+  transform: translateY(-0.5px);
 }
 
 .skill-card:focus-visible {

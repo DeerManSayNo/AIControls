@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { PageRefreshButton } from "../components/PageRefreshButton";
+import { useI18n } from "../i18n/provider";
 import {
   getDeepseekSettings,
   saveDeepseekSettings,
@@ -14,7 +15,21 @@ import {
   giteeRestoreFromRepoUrl,
 } from "../api/gitee";
 
+function InfoTooltip({ label, content }: { label: string; content: string }) {
+  return (
+    <span className="settings-info" aria-label={label}>
+      <span className="settings-info__icon" aria-hidden="true">
+        i
+      </span>
+      <span className="settings-info__tip" role="tooltip">
+        {content}
+      </span>
+    </span>
+  );
+}
+
 export default function SettingsPage() {
+  const { t, locale, preference, setPreference } = useI18n();
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [configured, setConfigured] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -140,23 +155,62 @@ export default function SettingsPage() {
   return (
     <div className="card settings-page">
       <div className="page-header__title-bar">
-        <h2>设置</h2>
+        <h2>{t("settings.title")}</h2>
         <PageRefreshButton
           onClick={() => setSettingsRefreshKey((k) => k + 1)}
           disabled={busy || settingsReloading}
           spinning={settingsReloading}
-          label="重新读取设置"
+          label={t("settings.reload")}
         />
       </div>
 
       <section style={{ marginTop: "1.25rem" }}>
-        <h3 className="settings-block-title">DeepSeek</h3>
-        <p className="muted" style={{ margin: "0 0 1rem" }}>
-          在此填写 DeepSeek API Key，保存在本应用本地数据目录（不会上传到 AIControls 服务端）。
-          进入 Agent / 项目 /「全部」浏览页并完成扫描后，应用会为尚未写入本地缓存的
-          Skill、MCP、Rules 调用 DeepSeek 打上场景分类（开发 / 办公 / 创作等），结果写入磁盘；
-          下次扫描会直接读出缓存，仅在出现新条目时再请求模型。
-        </p>
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">{t("settings.lang")}</h3>
+        </div>
+        <div className="seg" role="tablist" aria-label={t("settings.lang")}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={preference === "system"}
+            className={`seg__item${preference === "system" ? " active" : ""}`}
+            onClick={() => setPreference("system")}
+          >
+            {t("settings.lang.follow")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={preference === "zh"}
+            className={`seg__item${preference === "zh" ? " active" : ""}`}
+            onClick={() => setPreference("zh")}
+          >
+            {t("settings.lang.zh")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={preference === "en"}
+            className={`seg__item${preference === "en" ? " active" : ""}`}
+            onClick={() => setPreference("en")}
+          >
+            {t("settings.lang.en")}
+          </button>
+        </div>
+      </section>
+
+      <section style={{ marginTop: "1.25rem" }}>
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">DeepSeek</h3>
+          <InfoTooltip
+            label={locale === "zh" ? "DeepSeek 说明" : "About DeepSeek"}
+            content={
+              locale === "zh"
+                ? "填写 DeepSeek API Key。密钥仅保存在本机，不上传到 AIControls 服务端。扫描 Agent / 项目 / 全部时，应用会为未缓存的 Skill、MCP、Rules 生成场景分类并写入本地；后续优先读取缓存，仅在有新条目时再请求模型。"
+                : "Enter DeepSeek API key. The key is stored locally only. When scanning agents/projects/assets, uncached Skill/MCP/Rule entries are classified and cached locally."
+            }
+          />
+        </div>
         {loadErr ? (
           <p className="muted" style={{ margin: "0 0 0.75rem" }}>
             {loadErr}
@@ -175,7 +229,13 @@ export default function SettingsPage() {
           autoComplete="off"
           className="settings-input"
           placeholder={
-            configured ? "密钥已保存；输入新密钥可覆盖" : "例如 sk-…"
+            configured
+              ? locale === "zh"
+                ? "密钥已保存；输入新密钥可覆盖"
+                : "Key saved; enter a new key to replace"
+              : locale === "zh"
+                ? "例如 sk-…"
+                : "e.g. sk-…"
           }
           value={apiKeyInput}
           onChange={(e) => setApiKeyInput(e.target.value)}
@@ -195,7 +255,7 @@ export default function SettingsPage() {
             disabled={busy}
             onClick={onSave}
           >
-            保存
+            {locale === "zh" ? "保存" : "Save"}
           </button>
           <button
             type="button"
@@ -203,7 +263,7 @@ export default function SettingsPage() {
             disabled={busy}
             onClick={onTest}
           >
-            测试连接
+            {locale === "zh" ? "测试连接" : "Test connection"}
           </button>
         </div>
 
@@ -220,29 +280,41 @@ export default function SettingsPage() {
       </section>
 
       <section style={{ marginTop: "2rem" }}>
-        <h3 className="settings-block-title">Gitee 云备份</h3>
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">{locale === "zh" ? "Gitee 云备份" : "Gitee Cloud Backup"}</h3>
+          <InfoTooltip
+            label={locale === "zh" ? "Gitee 云备份说明" : "About Gitee backup"}
+            content={
+              locale === "zh"
+                ? "先在 Gitee 第三方应用页面创建应用，把下方回调地址原样填入并勾选仓库相关权限（如 projects）。保存 Client ID 与 Secret 后，点击在 Gitee 授权完成登录。应用会创建或复用指定仓库，并将提示词库与资源库 JSON 同步到 aicontrols-data/。授权后会立即备份一次；运行期间每 5 分钟检查本地文件，仅在变更时上传。"
+                : "Create a Gitee OAuth app, use the callback URL below, then save Client ID/Secret and authorize. The app syncs prompt/resource JSON into repository folder aicontrols-data/."
+            }
+          />
+        </div>
         <p className="muted" style={{ margin: "0 0 1rem" }}>
-          在{" "}
+          {locale === "zh" ? "在" : "Create and authorize in "}
           <a href="https://gitee.com/oauth/applications" target="_blank" rel="noreferrer">
-            Gitee 第三方应用
+            {locale === "zh" ? "Gitee 第三方应用" : "Gitee OAuth Applications"}
           </a>{" "}
-          创建应用，将下方「回调地址」原样填入应用设置，并勾选与仓库相关的权限（如
-          projects）。保存本页的 Client ID 与 Secret 后，点击「在 Gitee
-          授权」完成登录；应用会创建或复用指定仓库，并将提示词库与资源库 JSON
-          同步到仓库目录{" "}
-          <code style={{ fontSize: "0.85em" }}>aicontrols-data/</code>
-          。授权成功后会立即备份一次；之后在应用运行期间每 5
-          分钟检查一次本地文件，仅在内容有变化时才再次上传。
+          {locale === "zh"
+            ? "创建应用并完成授权后即可自动备份。"
+            : "to enable automatic backup."}
         </p>
 
         {giteePublic ? (
           <p className="muted" style={{ margin: "0 0 0.75rem", fontSize: "0.85rem" }}>
-            状态：
+            {locale === "zh" ? "状态：" : "Status: "}
             {giteePublic.connected
-              ? `已授权（${giteePublic.ownerLogin ?? "?"} / ${giteePublic.repoName ?? "?"})`
+              ? locale === "zh"
+                ? `已授权（${giteePublic.ownerLogin ?? "?"} / ${giteePublic.repoName ?? "?"})`
+                : `Authorized (${giteePublic.ownerLogin ?? "?"} / ${giteePublic.repoName ?? "?"})`
               : giteePublic.appConfigured
-                ? "已保存应用凭据，尚未授权"
-                : "未配置"}
+                ? locale === "zh"
+                  ? "已保存应用凭据，尚未授权"
+                  : "App credentials saved, not authorized"
+                : locale === "zh"
+                  ? "未配置"
+                  : "Not configured"}
           </p>
         ) : null}
 
@@ -250,7 +322,9 @@ export default function SettingsPage() {
           htmlFor="gitee-callback"
           style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.85rem" }}
         >
-          回调地址（须与 Gitee 应用配置一致）
+          {locale === "zh"
+            ? "回调地址（须与 Gitee 应用配置一致）"
+            : "Callback URL (must match Gitee app config)"}
         </label>
         <input
           id="gitee-callback"
@@ -271,7 +345,7 @@ export default function SettingsPage() {
           id="gitee-client-id"
           className="settings-input"
           autoComplete="off"
-          placeholder="OAuth 应用 Client ID"
+          placeholder={locale === "zh" ? "OAuth 应用 Client ID" : "OAuth Client ID"}
           value={giteeClientId}
           onChange={(e) => setGiteeClientId(e.target.value)}
         />
@@ -289,8 +363,12 @@ export default function SettingsPage() {
           autoComplete="off"
           placeholder={
             giteePublic?.appConfigured
-              ? "留空则保留已保存的 Secret；修改时请填写新值"
-              : "OAuth 应用密钥"
+              ? locale === "zh"
+                ? "留空则保留已保存的 Secret；修改时请填写新值"
+                : "Leave empty to keep existing secret"
+              : locale === "zh"
+                ? "OAuth 应用密钥"
+                : "OAuth app secret"
           }
           value={giteeSecret}
           onChange={(e) => setGiteeSecret(e.target.value)}
@@ -300,13 +378,17 @@ export default function SettingsPage() {
           htmlFor="gitee-repo"
           style={{ display: "block", margin: "0.75rem 0 0.35rem", fontSize: "0.85rem" }}
         >
-          备份仓库名
+          {locale === "zh" ? "备份仓库名" : "Backup repository"}
         </label>
         <input
           id="gitee-repo"
           className="settings-input"
           autoComplete="off"
-          placeholder="默认 aicontrols-backup（仅小写字母、数字、-、_）"
+          placeholder={
+            locale === "zh"
+              ? "默认 aicontrols-backup（仅小写字母、数字、-、_）"
+              : "Default aicontrols-backup (a-z, 0-9, -, _)"
+          }
           value={giteeRepo}
           onChange={(e) => setGiteeRepo(e.target.value)}
         />
@@ -315,13 +397,17 @@ export default function SettingsPage() {
           htmlFor="gitee-restore-url"
           style={{ display: "block", margin: "0.75rem 0 0.35rem", fontSize: "0.85rem" }}
         >
-          载入仓库地址（恢复）
+          {locale === "zh" ? "载入仓库地址（恢复）" : "Repository URL (restore)"}
         </label>
         <input
           id="gitee-restore-url"
           className="settings-input"
           autoComplete="off"
-          placeholder="https://gitee.com/<owner>/<repo> 或 .../tree/<branch>/aicontrols-data"
+          placeholder={
+            locale === "zh"
+              ? "https://gitee.com/<owner>/<repo> 或 .../tree/<branch>/aicontrols-data"
+              : "https://gitee.com/<owner>/<repo> or .../tree/<branch>/aicontrols-data"
+          }
           value={giteeRepoUrlInput}
           onChange={(e) => setGiteeRepoUrlInput(e.target.value)}
         />
@@ -340,7 +426,7 @@ export default function SettingsPage() {
             disabled={busy}
             onClick={onGiteeSave}
           >
-            保存 Gitee 配置
+            {locale === "zh" ? "保存 Gitee 配置" : "Save Gitee config"}
           </button>
           <button
             type="button"
@@ -348,7 +434,7 @@ export default function SettingsPage() {
             disabled={busy || !giteePublic?.appConfigured}
             onClick={onGiteeAuth}
           >
-            在 Gitee 授权
+            {locale === "zh" ? "在 Gitee 授权" : "Authorize on Gitee"}
           </button>
           <button
             type="button"
@@ -356,7 +442,7 @@ export default function SettingsPage() {
             disabled={busy || !giteePublic?.connected}
             onClick={onGiteeBackup}
           >
-            立即备份
+            {locale === "zh" ? "立即备份" : "Backup now"}
           </button>
           <button
             type="button"
@@ -364,7 +450,7 @@ export default function SettingsPage() {
             disabled={busy || !giteePublic?.connected}
             onClick={onGiteeDisconnect}
           >
-            解除授权
+            {locale === "zh" ? "解除授权" : "Disconnect"}
           </button>
           <button
             type="button"
@@ -372,7 +458,7 @@ export default function SettingsPage() {
             disabled={busy || !giteePublic?.connected || giteeRepoUrlInput.trim().length === 0}
             onClick={onGiteeRestore}
           >
-            从仓库载入
+            {locale === "zh" ? "从仓库载入" : "Restore from repo"}
           </button>
         </div>
 

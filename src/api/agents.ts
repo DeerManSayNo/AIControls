@@ -13,6 +13,8 @@ export type AssetEntry = {
   scenario?: string | null;
   /** DeepSeek 中文缩略介绍（<=100字） */
   brief_zh?: string | null;
+  /** DeepSeek 英文缩略介绍（<=100 chars） */
+  brief_en?: string | null;
   /** 技能文件夹内除主 SKILL.md 外的其他文件名（path 为目录时由扫描端填充） */
   skill_extra_files?: string[] | null;
 };

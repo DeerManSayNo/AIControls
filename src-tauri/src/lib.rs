@@ -81,8 +81,10 @@ async fn get_agent_global_inventory(
         let mut inv = scan::global_inventory(&agent_id)?;
         let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
         scan::attach_scenarios(&mut inv, &scenario_map);
-        let brief_map = storage::load_brief_map(&app).unwrap_or_default();
-        scan::attach_briefs(&mut inv, &brief_map);
+        let brief_map_zh = storage::load_brief_map(&app, "zh").unwrap_or_default();
+        scan::attach_briefs(&mut inv, "zh", &brief_map_zh);
+        let brief_map_en = storage::load_brief_map(&app, "en").unwrap_or_default();
+        scan::attach_briefs(&mut inv, "en", &brief_map_en);
         Ok(inv)
     })
     .await
@@ -95,8 +97,10 @@ async fn scan_project_directory(app: AppHandle, root: String) -> Result<AgentInv
         let mut inv = scan::scan_project_directory(std::path::Path::new(&root))?;
         let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
         scan::attach_scenarios(&mut inv, &scenario_map);
-        let brief_map = storage::load_brief_map(&app).unwrap_or_default();
-        scan::attach_briefs(&mut inv, &brief_map);
+        let brief_map_zh = storage::load_brief_map(&app, "zh").unwrap_or_default();
+        scan::attach_briefs(&mut inv, "zh", &brief_map_zh);
+        let brief_map_en = storage::load_brief_map(&app, "en").unwrap_or_default();
+        scan::attach_briefs(&mut inv, "en", &brief_map_en);
         Ok(inv)
     })
     .await
@@ -137,8 +141,18 @@ async fn deepseek_classify_inventory(
 async fn deepseek_summarize_inventory(
     app: AppHandle,
     inventory: AgentInventory,
+    locale: Option<String>,
 ) -> Result<AgentInventory, String> {
-    deepseek::summarize_inventory_missing(&app, inventory).await
+    deepseek::summarize_inventory_missing(&app, inventory, locale.unwrap_or_else(|| "zh".into())).await
+}
+
+#[tauri::command]
+async fn deepseek_resummarize_asset(
+    app: AppHandle,
+    asset: scan::AssetEntry,
+    locale: Option<String>,
+) -> Result<String, String> {
+    deepseek::resummarize_single_asset(&app, asset, locale.unwrap_or_else(|| "zh".into())).await
 }
 
 #[tauri::command]
@@ -511,6 +525,7 @@ pub fn run() {
             test_deepseek_connection,
             deepseek_classify_inventory,
             deepseek_summarize_inventory,
+            deepseek_resummarize_asset,
             deepseek_enrich_resource_url,
             reveal_path_in_folder,
             open_project_path,

@@ -1,0 +1,65 @@
+import type { Locale } from "./types";
+
+export type Messages = Record<string, string>;
+
+export const zhMessages: Messages = {
+  "common.cancel": "取消",
+  "common.save": "保存",
+  "common.close": "关闭",
+  "common.delete": "删除",
+  "common.edit": "编辑",
+  "common.copyFailed": "复制失败",
+  "common.loading": "加载中…",
+  "nav.main": "主导航",
+  "nav.tagline": "控制台",
+  "nav.home": "首页",
+  "nav.assets": "全部",
+  "nav.prompts": "Prompt 库",
+  "nav.resources": "资源库",
+  "nav.projects": "全部项目",
+  "nav.settings": "设置",
+  "nav.agentScanning": "正在扫描本机 Agent…",
+  "nav.noAgents": "未发现已安装的 Agent",
+  "nav.addProject": "添加项目",
+  "nav.addProjectTitle": "选择本地文件夹并扫描其中配置",
+  "settings.title": "设置",
+  "settings.reload": "重新读取设置",
+  "settings.lang": "界面语言",
+  "settings.lang.follow": "跟随系统",
+  "settings.lang.zh": "中文",
+  "settings.lang.en": "English",
+};
+
+export const enMessages: Messages = {
+  "common.cancel": "Cancel",
+  "common.save": "Save",
+  "common.close": "Close",
+  "common.delete": "Delete",
+  "common.edit": "Edit",
+  "common.copyFailed": "Copy failed",
+  "common.loading": "Loading…",
+  "nav.main": "Main Navigation",
+  "nav.tagline": "Console",
+  "nav.home": "Home",
+  "nav.assets": "Assets",
+  "nav.prompts": "Prompt Library",
+  "nav.resources": "Resource Library",
+  "nav.projects": "All Projects",
+  "nav.settings": "Settings",
+  "nav.agentScanning": "Scanning local agents…",
+  "nav.noAgents": "No installed agents found",
+  "nav.addProject": "Add Project",
+  "nav.addProjectTitle": "Pick a local folder and scan configs",
+  "settings.title": "Settings",
+  "settings.reload": "Reload settings",
+  "settings.lang": "Interface Language",
+  "settings.lang.follow": "Follow system",
+  "settings.lang.zh": "Chinese",
+  "settings.lang.en": "English",
+};
+
+export const allMessages: Record<Locale, Messages> = {
+  zh: zhMessages,
+  en: enMessages,
+};
+

@@ -1,3 +1,5 @@
+import { useI18n } from "../i18n/provider";
+
 type Props = {
   onClick: () => void;
   disabled?: boolean;
@@ -10,14 +12,16 @@ export function PageRefreshButton({
   onClick,
   disabled,
   spinning,
-  label = "重新加载",
+  label,
 }: Props) {
+  const { locale } = useI18n();
+  const resolvedLabel = label ?? (locale === "zh" ? "重新加载" : "Reload");
   return (
     <button
       type="button"
       className={`btn-icon page-refresh-btn${spinning ? " page-refresh-btn--spinning" : ""}`}
-      title={label}
-      aria-label={label}
+      title={resolvedLabel}
+      aria-label={resolvedLabel}
       aria-busy={spinning || undefined}
       disabled={disabled}
       onClick={onClick}

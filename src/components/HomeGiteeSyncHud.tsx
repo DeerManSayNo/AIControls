@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { getGiteeSyncStatus, type GiteeSyncStatus } from "../api/gitee";
+import { useI18n } from "../i18n/provider";
 
 function formatCountdown(totalSec: number): string {
   const s = Math.max(0, Math.floor(totalSec));
@@ -12,6 +13,7 @@ function formatCountdown(totalSec: number): string {
 }
 
 export default function HomeGiteeSyncHud() {
+  const { locale } = useI18n();
   const [st, setSt] = useState<GiteeSyncStatus | null>(null);
 
   useEffect(() => {
@@ -52,11 +54,11 @@ export default function HomeGiteeSyncHud() {
         <div
           className="home-gitee-sync__mini"
           style={miniStyle}
-          title="云备份 --:--"
-          aria-label="云备份倒计时 --:--"
+          title={locale === "zh" ? "云备份 --:--" : "Cloud backup --:--"}
+          aria-label={locale === "zh" ? "云备份倒计时 --:--" : "Cloud backup countdown --:--"}
         />
         <div className="home-gitee-sync__head" aria-hidden>
-          <span className="home-gitee-sync__title">云备份</span>
+          <span className="home-gitee-sync__title">{locale === "zh" ? "云备份" : "Cloud Backup"}</span>
         </div>
         <div className="home-gitee-sync__compact-row" aria-hidden>
           <span className="home-gitee-sync__time">--:--</span>
@@ -68,13 +70,23 @@ export default function HomeGiteeSyncHud() {
 
   const remainSec = (st.nextAutoCheckMs - Date.now()) / 1000;
   const overdue = remainSec < -5;
-  const countdownLabel = overdue ? "检查中…" : formatCountdown(remainSec);
+  const countdownLabel = overdue ? (locale === "zh" ? "检查中…" : "Checking…") : formatCountdown(remainSec);
 
-  let statusLine = "未备份";
+  let statusLine = locale === "zh" ? "未备份" : "Not backed up";
   if (st.lastMessage) {
     const ok = st.lastOk === true;
     const skip = st.lastMessage.includes("无变化");
-    statusLine = ok ? (skip ? "已同步" : "成功") : "失败";
+    statusLine = ok
+      ? skip
+        ? locale === "zh"
+          ? "已同步"
+          : "Synced"
+        : locale === "zh"
+          ? "成功"
+          : "Success"
+      : locale === "zh"
+        ? "失败"
+        : "Failed";
   }
 
   return createPortal(
@@ -85,11 +97,15 @@ export default function HomeGiteeSyncHud() {
       <div
         className="home-gitee-sync__mini"
         style={miniStyle}
-        title={`云备份 ${countdownLabel} · ${st.connected ? statusLine : "未连接"}`}
-        aria-label={`云备份倒计时 ${countdownLabel}，${st.connected ? statusLine : "未连接"}`}
+        title={`${locale === "zh" ? "云备份" : "Cloud backup"} ${countdownLabel} · ${
+          st.connected ? statusLine : locale === "zh" ? "未连接" : "Disconnected"
+        }`}
+        aria-label={`${
+          locale === "zh" ? "云备份倒计时" : "Cloud backup countdown"
+        } ${countdownLabel}, ${st.connected ? statusLine : locale === "zh" ? "未连接" : "Disconnected"}`}
       />
       <div className="home-gitee-sync__head">
-        <span className="home-gitee-sync__title">云备份</span>
+        <span className="home-gitee-sync__title">{locale === "zh" ? "云备份" : "Cloud Backup"}</span>
         <Link to="/settings" className="home-gitee-sync__link">
           ⚙
         </Link>
@@ -101,7 +117,7 @@ export default function HomeGiteeSyncHud() {
         />
         <span className="home-gitee-sync__time">{countdownLabel}</span>
         <span className="home-gitee-sync__status">
-          {st.connected ? statusLine : "未连接"}
+          {st.connected ? statusLine : locale === "zh" ? "未连接" : "Disconnected"}
         </span>
       </div>
     </div>,

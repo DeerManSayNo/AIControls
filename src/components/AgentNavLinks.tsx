@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { listDetectedAgents, type AgentScanResult } from "../api/agents";
+import { useI18n } from "../i18n/provider";
 import { NavIconForAgent } from "./navIcons";
 
 function navClass(active: boolean) {
@@ -8,6 +9,7 @@ function navClass(active: boolean) {
 }
 
 export default function AgentNavLinks() {
+  const { t } = useI18n();
   const [agents, setAgents] = useState<AgentScanResult[] | null>(null);
 
   useEffect(() => {
@@ -17,7 +19,7 @@ export default function AgentNavLinks() {
   if (agents === null) {
     return (
       <div className="side-nav-sub-label" aria-live="polite">
-        正在扫描本机 Agent…
+        {t("nav.agentScanning")}
       </div>
     );
   }
@@ -28,7 +30,7 @@ export default function AgentNavLinks() {
         className="side-nav-sub-label"
         title="安装 Cursor、Claude Code、Trae、Qoder、Kiro 或生成对应用户目录后重新打开"
       >
-        未发现已安装的 Agent
+        {t("nav.noAgents")}
       </p>
     );
   }
