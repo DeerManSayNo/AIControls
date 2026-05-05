@@ -13,6 +13,7 @@ disable-model-invocation: true
   - 若未提供提交说明：自动生成中文概括（基于 staged diff 统计）
 - 推送到 `origin/open-source`
 - 同步推送到 GitHub 远端 `github/open-source`（`https://github.com/DeerManSayNo/AIControls.git`）
+  - 若本地尚未配置 `github` 远端，脚本会自动添加该远端
 
 ## 执行
 在仓库根目录运行：

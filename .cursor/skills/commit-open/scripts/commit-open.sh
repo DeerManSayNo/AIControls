@@ -3,11 +3,15 @@ set -euo pipefail
 
 branch="open-source"
 primary_remote="origin"
+github_remote_url="https://github.com/DeerManSayNo/AIControls.git"
 push_remotes=("origin" "github")
 
 push_branch() {
   local remote_name
   for remote_name in "${push_remotes[@]}"; do
+    if [[ "${remote_name}" == "github" ]] && ! git remote get-url github >/dev/null 2>&1; then
+      git remote add github "${github_remote_url}"
+    fi
     if ! git remote get-url "${remote_name}" >/dev/null 2>&1; then
       echo "Remote '${remote_name}' not configured; skipping." >&2
       continue
