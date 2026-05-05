@@ -125,7 +125,9 @@ function Layout({ children }: { children: ReactNode }) {
               资源库
             </span>
           </NavLink>
+        </div>
 
+        <div className="side-nav__scroll">
           <button
             type="button"
             className="side-nav-section-toggle"
@@ -154,51 +156,50 @@ function Layout({ children }: { children: ReactNode }) {
           <div id="side-nav-agents" hidden={agentsCollapsed}>
             <AgentNavLinks />
           </div>
-        </div>
-
-        <div
-          className={`side-nav__projects${projectsCollapsed ? " side-nav__projects--collapsed" : ""}`}
-          aria-label="项目列表"
-        >
-          <button
-            type="button"
-            className="side-nav-section-toggle side-nav__projects-heading"
-            aria-expanded={!projectsCollapsed}
-            aria-controls="side-nav-projects"
-            onClick={() => {
-              setProjectsCollapsed((prev) => {
-                const next = !prev;
-                try {
-                  window.localStorage.setItem(
-                    "aicontrols-nav-collapse-projects",
-                    next ? "1" : "0",
-                  );
-                } catch {
-                  // ignore
-                }
-                return next;
-              });
-            }}
-          >
-            <span>全部项目</span>
-            <span className="side-nav-section-toggle__chevron" aria-hidden>
-              ▾
-            </span>
-          </button>
           <div
-            id="side-nav-projects"
-            className="side-nav__projects-list"
-            hidden={projectsCollapsed}
+            className={`side-nav__projects${projectsCollapsed ? " side-nav__projects--collapsed" : ""}`}
+            aria-label="项目列表"
           >
-            {projectPaths.map((p) => {
-              const isCurrent =
-                activeProjectPath !== null &&
-                pathsReferToSameDir(activeProjectPath, p);
-              return (
-                <ProjectNavItem key={p} projectPath={p} isCurrent={isCurrent} />
-              );
-            })}
-            <AddProjectNavButton />
+            <button
+              type="button"
+              className="side-nav-section-toggle side-nav__projects-heading"
+              aria-expanded={!projectsCollapsed}
+              aria-controls="side-nav-projects"
+              onClick={() => {
+                setProjectsCollapsed((prev) => {
+                  const next = !prev;
+                  try {
+                    window.localStorage.setItem(
+                      "aicontrols-nav-collapse-projects",
+                      next ? "1" : "0",
+                    );
+                  } catch {
+                    // ignore
+                  }
+                  return next;
+                });
+              }}
+            >
+              <span>全部项目</span>
+              <span className="side-nav-section-toggle__chevron" aria-hidden>
+                ▾
+              </span>
+            </button>
+            <div
+              id="side-nav-projects"
+              className="side-nav__projects-list"
+              hidden={projectsCollapsed}
+            >
+              {projectPaths.map((p) => {
+                const isCurrent =
+                  activeProjectPath !== null &&
+                  pathsReferToSameDir(activeProjectPath, p);
+                return (
+                  <ProjectNavItem key={p} projectPath={p} isCurrent={isCurrent} />
+                );
+              })}
+              <AddProjectNavButton />
+            </div>
           </div>
         </div>
 
