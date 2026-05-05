@@ -22,6 +22,16 @@
 
 **AIControls** is a local desktop control center for personal AI agents. It helps you discover, organize, copy, classify, and back up the agent assets that usually live across different tools and projects.
 
+## Product Preview
+
+<p align="center">
+  <img src="PixPin_2026-05-05_15-18-27.png" alt="AIControls desktop dashboard" width="960" />
+</p>
+
+首页会把本机 Agent、项目、Skills、MCP、Rules 汇总成一张工作台视图。左侧是 Agent 与项目导航，中间可以查看当前资产统计、从 GitHub 仓库导入 Skill，并快速进入最近项目。
+
+The dashboard gives you a live overview of your local agent ecosystem: detected agents, scanned projects, reusable skills, MCP servers, rules, GitHub skill import, and recent project entry points.
+
 ## What It Does
 
 - **Agent inventory**: 自动发现 Cursor、Claude Code、Trae、Qoder、Kiro，并汇总全局与项目级 Skills、MCP、Rules。
