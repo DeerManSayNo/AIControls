@@ -288,19 +288,38 @@ pub fn perform_copy(
     project_root: Option<&str>,
     on_conflict_suffix: bool,
 ) -> Result<String, String> {
-    let source = Path::new(source_path.trim());
-    let dest_parent = resolve_dest_parent(kind, agent_id, bucket_index, project_root.map(Path::new))?;
+    let root_path = project_root.map(Path::new);
+    let dest_parent_uncanon = resolve_dest_parent(kind, agent_id, bucket_index, root_path)?;
+    let guard = if kind == "project" {
+        root_path
+    } else {
+        None
+    };
+    let final_dir = copy_skill_package_into_parent(
+        &dest_parent_uncanon,
+        source_path,
+        on_conflict_suffix,
+        guard,
+    )?;
+    Ok(final_dir.to_string_lossy().into_owned())
+}
 
-    fs::create_dir_all(&dest_parent)
-        .map_err(|e| format!("无法创建目标 skills 目录: {e}"))?;
+/// Copy a skill package into an existing canonical destination parent (e.g. app-managed「我的技能」目录)。
+pub fn copy_skill_package_into_parent(
+    dest_parent_uncanon: &Path,
+    source_path: &str,
+    on_conflict_suffix: bool,
+    project_root_for_guard: Option<&Path>,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(dest_parent_uncanon)
+        .map_err(|e| format!("无法创建目标目录: {e}"))?;
 
-    let dest_parent = dest_parent
+    let dest_parent = dest_parent_uncanon
         .canonicalize()
         .map_err(|e| format!("无法解析目标目录: {e}"))?;
 
-    if kind == "project" {
-        let root = project_root.ok_or_else(|| "project 模式需要 project_root".to_string())?;
-        let root = Path::new(root)
+    if let Some(root_raw) = project_root_for_guard {
+        let root = root_raw
             .canonicalize()
             .map_err(|e| format!("无法解析项目根目录: {e}"))?;
         if !dest_parent.starts_with(&root) {
@@ -308,19 +327,28 @@ pub fn perform_copy(
         }
     }
 
+    finish_skill_copy_under_dest(&dest_parent, source_path.trim(), on_conflict_suffix)
+}
+
+fn finish_skill_copy_under_dest(
+    dest_parent: &Path,
+    source_path: &str,
+    on_conflict_suffix: bool,
+) -> Result<PathBuf, String> {
+    let source = Path::new(source_path.trim());
     let source_kind = resolve_skill_copy_source(source)?;
 
-    let final_dir = match source_kind {
+    match source_kind {
         SkillCopySource::Directory {
             root,
             folder_base_name,
         } => {
-            if path_starts_with_canonical(&dest_parent, &root) {
+            if path_starts_with_canonical(dest_parent, &root) {
                 return Err("不能复制到该技能包自身目录内部".into());
             }
-            let dest_dir = pick_dest_dir(&dest_parent, &folder_base_name, on_conflict_suffix)?;
+            let dest_dir = pick_dest_dir(dest_parent, &folder_base_name, on_conflict_suffix)?;
             copy_tree_merge_contents(&root, &dest_dir)?;
-            dest_dir
+            Ok(dest_dir)
         }
         SkillCopySource::LooseMarkdown {
             skill_md,
@@ -330,17 +358,16 @@ pub fn perform_copy(
                 .parent()
                 .ok_or_else(|| "无效路径".to_string())?
                 .to_path_buf();
-            if path_starts_with_canonical(&dest_parent, &parent) {
+            if path_starts_with_canonical(dest_parent, &parent) {
                 return Err("不能复制到源文件所在目录内部".into());
             }
-            let dest_dir = pick_dest_dir(&dest_parent, &dest_folder_name, on_conflict_suffix)?;
+            let dest_dir = pick_dest_dir(dest_parent, &dest_folder_name, on_conflict_suffix)?;
             fs::create_dir_all(&dest_dir).map_err(|e| format!("{e}"))?;
             let fname = skill_md
                 .file_name()
                 .ok_or_else(|| "无效文件名".to_string())?;
             fs::copy(&skill_md, dest_dir.join(fname)).map_err(|e| format!("复制 SKILL 文件失败: {e}"))?;
 
-            // Optional: sibling directory next to the loose markdown, same name as package folder.
             let sibling = parent.join(&dest_folder_name);
             if sibling.is_dir() {
                 let can_dest = dest_dir
@@ -354,11 +381,9 @@ pub fn perform_copy(
                 }
             }
 
-            dest_dir
+            Ok(dest_dir)
         }
-    };
-
-    Ok(final_dir.to_string_lossy().into_owned())
+    }
 }
 
 /// 仅删除**技能包文件夹**（`remove_dir_all`）。`skills` 根下的散装 `SKILL.md` 只能复制，不提供整夹删除。

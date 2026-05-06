@@ -9,6 +9,9 @@ import type {
 
 /** 与 payload 对应的复制桶键，用于与后端返回的可见列表对齐 */
 function bucketKey(payload: CopySkillTargetPayload): string {
+  if (payload.destKind === "myLibrary") {
+    return "";
+  }
   return `${payload.agentId}:${payload.bucketIndex}`;
 }
 
@@ -65,24 +68,30 @@ export function SkillCopyDestinationDialog({
     Record<string, ProjectGate>
   >({});
 
-  const { globalSections, projectSections, globalItemCount } = useMemo(() => {
-    const global = sections.filter((s) => s.key.startsWith("global"));
-    const projects = sections.filter((s) => s.key.startsWith("proj:"));
-    const globalItemCount = global.reduce((n, s) => n + s.items.length, 0);
-    return {
-      globalSections: global,
-      projectSections: projects,
-      globalItemCount,
-    };
-  }, [sections]);
+  const { mineSections, globalSections, projectSections, globalItemCount } =
+    useMemo(() => {
+      const mine = sections.filter((s) => s.key === "mine-library");
+      const global = sections.filter((s) => s.key.startsWith("global"));
+      const projects = sections.filter((s) => s.key.startsWith("proj:"));
+      const globalItemCount =
+        mine.reduce((n, s) => n + s.items.length, 0) +
+        global.reduce((n, s) => n + s.items.length, 0);
+      return {
+        mineSections: mine,
+        globalSections: global,
+        projectSections: projects,
+        globalItemCount,
+      };
+    }, [sections]);
 
   useEffect(() => {
     setQuery("");
     setExpandedKey(null);
     const projSecs = sections.filter((s) => s.key.startsWith("proj:"));
-    const gItems = sections
-      .filter((s) => s.key.startsWith("global"))
-      .reduce((n, s) => n + s.items.length, 0);
+    const gItems =
+      sections
+        .filter((s) => s.key === "mine-library" || s.key.startsWith("global"))
+        .reduce((n, s) => n + s.items.length, 0);
     setTab(projSecs.length > 0 && gItems === 0 ? "projects" : "global");
   }, [row.id, sections]);
 
@@ -147,9 +156,21 @@ export function SkillCopyDestinationDialog({
     }
     return {
       gate,
-      items: sec.items.filter((it) => gate.has(bucketKey(it.payload))),
+      items: sec.items.filter((it) => {
+        const k = bucketKey(it.payload);
+        return k.length > 0 && gate.has(k);
+      }),
     };
   };
+
+  const filteredMine = useMemo(() => {
+    return mineSections
+      .map((sec) => ({
+        ...sec,
+        items: sec.items.filter((it) => matchesFilter(query, it.label)),
+      }))
+      .filter((sec) => sec.items.length > 0);
+  }, [mineSections, query]);
 
   const filteredProjects = useMemo(() => {
     return projectSections.filter((sec) => {
@@ -252,7 +273,7 @@ export function SkillCopyDestinationDialog({
                   onClick={() => setTab("global")}
                   disabled={busy}
                 >
-                  用户全局
+                  {locale === "zh" ? "用户全局" : "Global"}
                   <span className="skill-copy-dialog__tab-badge">{globalItemCount}</span>
                 </button>
                 <button
@@ -263,7 +284,7 @@ export function SkillCopyDestinationDialog({
                   onClick={() => setTab("projects")}
                   disabled={busy}
                 >
-                  项目
+                  {locale === "zh" ? "项目" : "Projects"}
                   <span className="skill-copy-dialog__tab-badge">{projectSections.length}</span>
                 </button>
               </div>
@@ -285,31 +306,55 @@ export function SkillCopyDestinationDialog({
                   hidden={showTabs && tab !== "global"}
                   aria-hidden={showTabs && tab !== "global"}
                 >
-                  {filteredGlobal.length === 0 ? (
+                  {filteredMine.length === 0 && filteredGlobal.length === 0 ? (
                     <p className="skill-copy-dialog__empty skill-copy-dialog__empty--inline">
                       {query.trim()
-                        ? "没有匹配的全局目标，试试其它关键词或切换到「项目」。"
-                        : "暂无全局目标。"}
+                        ? locale === "zh"
+                          ? "没有匹配的全局目标，试试其它关键词或切换到「项目」。"
+                          : "No matching global targets. Try another keyword or switch to Projects."
+                        : locale === "zh"
+                          ? "暂无全局目标。"
+                          : "No global targets."}
                     </p>
                   ) : (
-                    filteredGlobal.map((sec) => (
-                      <div key={sec.key} className="skill-copy-dialog__block">
-                        <div className="skill-copy-dialog__block-label">{sec.title}</div>
-                        <div className="skill-copy-dialog__option-grid">
-                          {sec.items.map((it) => (
-                            <button
-                              key={it.id}
-                              type="button"
-                              className="skill-copy-dialog__tile"
-                              disabled={busy}
-                              onClick={() => onChoose(it.payload)}
-                            >
-                              {it.label}
-                            </button>
-                          ))}
+                    <>
+                      {filteredMine.map((sec) => (
+                        <div key={sec.key} className="skill-copy-dialog__block">
+                          <div className="skill-copy-dialog__block-label">{sec.title}</div>
+                          <div className="skill-copy-dialog__option-grid">
+                            {sec.items.map((it) => (
+                              <button
+                                key={it.id}
+                                type="button"
+                                className="skill-copy-dialog__tile skill-copy-dialog__tile--accent"
+                                disabled={busy}
+                                onClick={() => onChoose(it.payload)}
+                              >
+                                {it.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      ))}
+                      {filteredGlobal.map((sec) => (
+                        <div key={sec.key} className="skill-copy-dialog__block">
+                          <div className="skill-copy-dialog__block-label">{sec.title}</div>
+                          <div className="skill-copy-dialog__option-grid">
+                            {sec.items.map((it) => (
+                              <button
+                                key={it.id}
+                                type="button"
+                                className="skill-copy-dialog__tile"
+                                disabled={busy}
+                                onClick={() => onChoose(it.payload)}
+                              >
+                                {it.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </>
                   )}
                 </div>
               )}
@@ -323,11 +368,15 @@ export function SkillCopyDestinationDialog({
                 >
                   {projectSections.length === 0 ? (
                     <p className="skill-copy-dialog__empty skill-copy-dialog__empty--inline">
-                      侧栏未添加项目时，无法复制到项目目录。可在左侧「添加项目」后加入文件夹。
+                      {locale === "zh"
+                        ? "侧栏未添加项目时，无法复制到项目目录。可在左侧「添加项目」后加入文件夹。"
+                        : 'Add a project from the sidebar to copy into its agent directories.'}
                     </p>
                   ) : filteredProjects.length === 0 ? (
                     <p className="skill-copy-dialog__empty skill-copy-dialog__empty--inline">
-                      没有匹配的项目，请调整搜索词。
+                      {locale === "zh"
+                        ? "没有匹配的项目，请调整搜索词。"
+                        : "No matching projects. Adjust your search."}
                     </p>
                   ) : (
                     <ul className="skill-copy-dialog__project-list">
@@ -373,12 +422,15 @@ export function SkillCopyDestinationDialog({
                               <div className="skill-copy-dialog__project-targets">
                                 {gate === "loading" ? (
                                   <p className="skill-copy-dialog__gate-hint">
-                                    正在检测该仓库下的 Agent 目录…
+                                    {locale === "zh"
+                                      ? "正在检测该仓库下的 Agent 目录…"
+                                      : "Detecting agent directories…"}
                                   </p>
                                 ) : visibleItems.length === 0 ? (
                                   <p className="skill-copy-dialog__gate-hint">
-                                    未发现用于存放技能的 Agent
-                                    目录（例如 .cursor、.claude）。此处只列出磁盘上已存在的配置文件夹。
+                                    {locale === "zh"
+                                      ? "未发现用于存放技能的 Agent 目录（例如 .cursor、.claude）。此处只列出磁盘上已存在的配置文件夹。"
+                                      : 'No agent skill directories found (e.g. .cursor, .claude). Only existing config folders are listed.'}
                                   </p>
                                 ) : (
                                   <div className="skill-copy-dialog__option-grid">

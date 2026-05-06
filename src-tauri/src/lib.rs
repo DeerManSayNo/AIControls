@@ -3,6 +3,7 @@
 mod deepseek;
 mod gitee;
 mod github_import;
+mod my_skills_library;
 mod prompt_library;
 mod resource_library;
 mod scan;
@@ -409,6 +410,7 @@ async fn detect_github_repo_skills(
 
 #[tauri::command]
 async fn import_github_skill_to_destination(
+    app: AppHandle,
     repo_url: String,
     skill_path: String,
     dest_kind: String,
@@ -422,6 +424,7 @@ async fn import_github_skill_to_destination(
         _ => true,
     };
     github_import::import_github_skill_to_destination(
+        &app,
         &repo_url,
         &skill_path,
         &dest_kind,
@@ -457,6 +460,26 @@ fn save_resource_library(
     library: resource_library::ResourceLibraryFile,
 ) -> Result<(), String> {
     resource_library::save_resource_library(&app, library)
+}
+
+#[tauri::command]
+fn get_my_skills_library(
+    app: AppHandle,
+) -> Result<my_skills_library::MySkillsLibraryFile, String> {
+    my_skills_library::load_my_skills_library(&app)
+}
+
+#[tauri::command]
+fn add_skill_to_my_library(
+    app: AppHandle,
+    source_path: String,
+) -> Result<my_skills_library::MySkillItem, String> {
+    my_skills_library::add_skill_to_my_library(&app, source_path)
+}
+
+#[tauri::command]
+fn remove_my_skill(app: AppHandle, id: String) -> Result<(), String> {
+    my_skills_library::remove_my_skill(&app, id)
 }
 
 #[tauri::command]
@@ -539,6 +562,9 @@ pub fn run() {
             save_prompt_library,
             get_resource_library,
             save_resource_library,
+            get_my_skills_library,
+            add_skill_to_my_library,
+            remove_my_skill,
             get_gitee_settings,
             save_gitee_app,
             gitee_oauth_login,

@@ -1947,6 +1947,43 @@ main {
   flex-shrink: 0;
 }
 
+.page-header__assets-seg {
+  flex-shrink: 0;
+}
+
+.page-header__assets-seg .skill-copy-dialog__tab-badge {
+  margin-left: 0.28rem;
+}
+
+.page-header__my-import {
+  flex-shrink: 0;
+  padding: 0.38rem 0.8rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.page-header__my-import:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.page-header__my-import:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.toolbar__mine-kind-hint {
+  font-size: 0.8125rem;
+  align-self: center;
+  padding: 0.28rem 0;
+}
+
 .settings-page > .page-header__title-bar {
   margin-top: 0;
 }
@@ -2930,6 +2967,17 @@ main {
   background: var(--nav-item-hover);
   border-color: var(--accent);
   outline: none;
+}
+
+.skill-copy-dialog__tile--accent {
+  border-color: var(--accent-muted);
+  background: var(--accent-muted);
+}
+
+.skill-copy-dialog__tile--accent:hover,
+.skill-copy-dialog__tile--accent:focus-visible {
+  background: var(--accent-muted);
+  border-color: var(--accent);
 }
 
 .skill-copy-dialog__project-list {

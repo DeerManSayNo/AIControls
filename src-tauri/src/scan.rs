@@ -356,7 +356,7 @@ fn read_preview(path: &Path, max: usize) -> String {
 
 /// Matches `SkillDetailPanel` / Cursor skill convention: prefer YAML `description:` in frontmatter,
 /// else first non-empty line of the Markdown body (often `# Title`).
-fn preview_from_markdown(s: &str, max: usize) -> String {
+pub(crate) fn preview_from_markdown(s: &str, max: usize) -> String {
     let t = s.trim();
     let (fm_opt, body): (Option<&str>, &str) = if t.starts_with("---") {
         if let Some(rest) = t.strip_prefix("---") {

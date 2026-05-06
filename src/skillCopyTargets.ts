@@ -1,4 +1,3 @@
-import type { CopySkillPackageInput } from "./api/agents";
 import {
   normalizeProjectPath,
   pathsReferToSameDir,
@@ -23,16 +22,42 @@ const SKILL_BUCKET_REL: Record<string, readonly string[]> = {
   kiro: [".kiro/skills"],
 };
 
-export type CopySkillTargetPayload = Omit<
-  CopySkillPackageInput,
-  "sourcePath" | "onConflict"
->;
+/** 「复制到…」目标：Agent 目录或应用内「我的」技能库。 */
+export type CopySkillTargetPayload =
+  | {
+      destKind: "global";
+      agentId: string;
+      bucketIndex: number;
+    }
+  | {
+      destKind: "project";
+      agentId: string;
+      bucketIndex: number;
+      projectRoot: string;
+    }
+  | {
+      destKind: "myLibrary";
+    };
 
 export type CopySkillMenuSection = {
   key: string;
   title: string;
   items: { id: string; label: string; payload: CopySkillTargetPayload }[];
 };
+
+function mineLibrarySection(copyVerb: "复制" | "导入"): CopySkillMenuSection {
+  return {
+    key: "mine-library",
+    title: "我的Skills",
+    items: [
+      {
+        id: "mine-library-sink",
+        label: "我的Skills",
+        payload: { destKind: "myLibrary" },
+      },
+    ],
+  };
+}
 
 function folderBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "项目";
@@ -89,7 +114,7 @@ function projectItems(
   }));
 }
 
-/** Destinations for「复制 skill」：仅全局 Agent skills 根、或项目下各 Agent 的 skills 根（不做「无 agent 的项目路径」）。 */
+/** Destinations for「复制 skill」：含 AIControls「我的」技能库 + Agent 全局/项目 skills 根。 */
 export function buildCopySkillMenuSections(params: {
   dataSet: "skills" | "project" | "aggregate";
   ecosystem?: string;
@@ -97,6 +122,8 @@ export function buildCopySkillMenuSections(params: {
   projectPaths: readonly string[];
   /** Agent 页侧栏已扫过的项目路径（与全局同一生态合并展示时的项目列表） */
   agentProjectScanPaths: readonly string[];
+  /** 首页导入对话框等处设为 `"导入"`，以便分段标题写「导入到」 */
+  copyVerb?: "复制" | "导入";
 }): CopySkillMenuSection[] {
   const {
     dataSet,
@@ -104,8 +131,13 @@ export function buildCopySkillMenuSections(params: {
     projectRoot,
     projectPaths,
     agentProjectScanPaths,
+    copyVerb = "复制",
   } = params;
   const sections: CopySkillMenuSection[] = [];
+  const prependMine = (list: CopySkillMenuSection[]) => [
+    mineLibrarySection(copyVerb),
+    ...list,
+  ];
 
   if (dataSet === "skills" && ecosystem) {
     sections.push({
@@ -120,7 +152,7 @@ export function buildCopySkillMenuSections(params: {
         items: projectItems(p, ecosystem),
       });
     }
-    return sections;
+    return prependMine(sections);
   }
 
   if (dataSet === "project") {
@@ -143,7 +175,7 @@ export function buildCopySkillMenuSections(params: {
         items: AGENT_ORDER.flatMap((id) => projectItems(pt, id)),
       });
     }
-    return sections;
+    return prependMine(sections);
   }
 
   if (dataSet === "aggregate") {
@@ -161,8 +193,8 @@ export function buildCopySkillMenuSections(params: {
         items: AGENT_ORDER.flatMap((id) => projectItems(pt, id)),
       });
     }
-    return sections;
+    return prependMine(sections);
   }
 
-  return sections;
+  return prependMine(sections);
 }

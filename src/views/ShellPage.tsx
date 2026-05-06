@@ -24,7 +24,10 @@ import { getOpenAppForProject, setOpenAppForProject } from "../projectOpenAppSto
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import HomeGiteeSyncHud from "../components/HomeGiteeSyncHud";
-import { buildCopySkillMenuSections } from "../skillCopyTargets";
+import {
+  buildCopySkillMenuSections,
+  type CopySkillTargetPayload,
+} from "../skillCopyTargets";
 import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
 import { useI18n } from "../i18n/provider";
 
@@ -388,7 +391,7 @@ export default function ShellPage({ subtitle }: Props) {
     })();
   };
 
-  const homeCopyMenuSections = useMemo(
+  const homeImportMenuSections = useMemo(
     () =>
       buildCopySkillMenuSections({
         dataSet: "aggregate",
@@ -396,17 +399,9 @@ export default function ShellPage({ subtitle }: Props) {
         projectRoot: undefined,
         ecosystem: undefined,
         agentProjectScanPaths: [],
+        copyVerb: "导入",
       }),
     [projectPaths],
-  );
-
-  const homeImportMenuSections = useMemo(
-    () =>
-      homeCopyMenuSections.map((sec) => ({
-        ...sec,
-        title: sec.title.replace(/^复制到/, "导入到"),
-      })),
-    [homeCopyMenuSections],
   );
 
   const closeGithubSkillPickModal = () => setGithubSkillPickModal(null);
@@ -429,12 +424,9 @@ export default function ShellPage({ subtitle }: Props) {
     setPendingGithubImport({ repoUrl: modal.repoUrl, skills: selected });
   };
 
-  const importPendingGithubSkillToDestination = (payload: {
-    destKind: "global" | "project";
-    agentId: string;
-    bucketIndex: number;
-    projectRoot?: string;
-  }) => {
+  const importPendingGithubSkillToDestination = (
+    payload: CopySkillTargetPayload,
+  ) => {
     const pending = pendingGithubImport;
     if (!pending) return;
     void (async () => {
@@ -442,12 +434,29 @@ export default function ShellPage({ subtitle }: Props) {
       let success = 0;
       const failed: string[] = [];
       for (const skill of pending.skills) {
-        const result = await importGithubSkillToDestination({
+        const common = {
           repoUrl: pending.repoUrl,
           skillPath: skill.path,
-          ...payload,
-          onConflict: "suffix",
-        });
+          onConflict: "suffix" as const,
+        };
+        const result =
+          payload.destKind === "myLibrary"
+            ? await importGithubSkillToDestination({
+                ...common,
+                destKind: "myLibrary",
+                agentId: "",
+                bucketIndex: 0,
+              })
+            : await importGithubSkillToDestination({
+                ...common,
+                destKind: payload.destKind,
+                agentId: payload.agentId,
+                bucketIndex: payload.bucketIndex,
+                projectRoot:
+                  payload.destKind === "project"
+                    ? payload.projectRoot
+                    : undefined,
+              });
         if ("error" in result) {
           failed.push(`${skill.title}：${result.error}`);
           continue;

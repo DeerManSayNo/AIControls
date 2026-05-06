@@ -160,7 +160,7 @@ export async function detectGithubRepoSkills(
 export type ImportGithubSkillInput = {
   repoUrl: string;
   skillPath: string;
-  destKind: "global" | "project";
+  destKind: "global" | "project" | "myLibrary";
   agentId: string;
   bucketIndex: number;
   projectRoot?: string;

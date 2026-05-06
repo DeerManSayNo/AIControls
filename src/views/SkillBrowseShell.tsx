@@ -28,6 +28,12 @@ import {
   type AgentInventory,
   type AssetEntry,
 } from "../api/agents";
+import {
+  addSkillToMyLibrary,
+  getMySkillsLibrary,
+  removeMySkill,
+  type MySkillsLibraryFile,
+} from "../api/mySkills";
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
@@ -48,6 +54,7 @@ import {
 import { revealPathInFolder } from "../api/reveal";
 import { buildCopySkillMenuSections } from "../skillCopyTargets";
 import { useI18n } from "../i18n/provider";
+import { open } from "@tauri-apps/plugin-dialog";
 
 type AssetKind = "skill" | "mcp" | "rule";
 
@@ -374,6 +381,15 @@ export default function SkillBrowseShell({
   } | null>(null);
   /** 递增以使数据 useEffect 重新拉取（与手动刷新配合） */
   const [refreshKey, setRefreshKey] = useState(0);
+  /** 「全部」资产页：汇总 vs 我的技能库 */
+  const [aggregateAssetsTab, setAggregateAssetsTab] = useState<"all" | "mine">(
+    "all",
+  );
+  const [mySkillsLib, setMySkillsLib] = useState<MySkillsLibraryFile | null>(
+    null,
+  );
+  const [mySkillsLoading, setMySkillsLoading] = useState(false);
+  const [mySkillsImportBusy, setMySkillsImportBusy] = useState(false);
 
   const onRefreshInventory = useCallback(() => {
     if (dataSet === "aggregate") {
@@ -396,6 +412,10 @@ export default function SkillBrowseShell({
       !!projectRoot?.trim() &&
       (projectLoading || aiScenarioBusy || aiBriefBusy)) ||
     (dataSet === "aggregate" &&
+      aggregateAssetsTab === "mine" &&
+      mySkillsLoading) ||
+    (dataSet === "aggregate" &&
+      aggregateAssetsTab === "all" &&
       (aggregateLoading || aiScenarioBusy || aiBriefBusy));
 
   useEffect(() => {
@@ -412,6 +432,36 @@ export default function SkillBrowseShell({
     setSkillCopyTargetModalRow(null);
     setShellToast(null);
   }, [dataSet, ecosystem, projectRoot]);
+
+  useEffect(() => {
+    if (dataSet !== "aggregate") setAggregateAssetsTab("all");
+  }, [dataSet]);
+
+  useEffect(() => {
+    if (dataSet === "aggregate" && aggregateAssetsTab === "mine") {
+      setFilter("all");
+      setScenario("all");
+    }
+  }, [dataSet, aggregateAssetsTab]);
+
+  useEffect(() => {
+    if (dataSet !== "aggregate" || aggregateAssetsTab !== "mine") return;
+    let cancelled = false;
+    setMySkillsLoading(true);
+    void getMySkillsLibrary()
+      .then((lib) => {
+        if (!cancelled) setMySkillsLib(lib);
+      })
+      .catch(() => {
+        if (!cancelled) setMySkillsLib(null);
+      })
+      .finally(() => {
+        if (!cancelled) setMySkillsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataSet, aggregateAssetsTab, refreshKey]);
 
   useEffect(() => {
     if (!cardContextMenu) return;
@@ -699,6 +749,28 @@ export default function SkillBrowseShell({
       return rows.filter((row) => rowMatchesScenarioChip(row, scenario));
     };
 
+    if (dataSet === "aggregate" && aggregateAssetsTab === "mine") {
+      const mineRows: BrowseRow[] = (mySkillsLib?.items ?? []).map((it) => ({
+        id: `mine:${it.id}`,
+        sourceId: it.id,
+        title: it.title,
+        desc: it.description,
+        descSource: "source",
+        kind: "skill",
+        ecosystem: "cursor",
+        tags: [locale === "zh" ? "我的技能库" : "My skills"],
+        active: true,
+        sourcePath: it.path,
+        scenario: null,
+      }));
+      const scenarioCounts = scenarioCountsFromRows(mineRows);
+      const filtered = applyScenarioFilter(applyKindAndQuery(mineRows));
+      return {
+        sections: [{ key: "mine-grid", title: "", rows: filtered }],
+        scenarioCounts,
+      };
+    }
+
     if (dataSet === "project") {
       if (!projectRoot) {
         return { sections: [], scenarioCounts: empty };
@@ -847,6 +919,8 @@ export default function SkillBrowseShell({
     aggregateLoading,
     agentProjectScans,
     locale,
+    aggregateAssetsTab,
+    mySkillsLib,
   ]);
 
   useEffect(() => {
@@ -916,14 +990,22 @@ export default function SkillBrowseShell({
     e.preventDefault();
     e.stopPropagation();
     const pad = 8;
-    const approxW = 220;
+    const approxW = 240;
     const skillPath = item.sourcePath?.trim() ?? "";
+    const isMineRow = item.id.startsWith("mine:");
     const skillHasDelete =
       item.kind === "skill" &&
       !!skillPath &&
-      skillBrowsePathIsDeletableFolder(skillPath);
+      skillBrowsePathIsDeletableFolder(skillPath) &&
+      !isMineRow;
     const approxH =
-      item.kind === "skill" ? (skillHasDelete ? 132 : 88) : 48;
+      item.kind === "skill"
+        ? isMineRow
+          ? 132
+          : skillHasDelete
+            ? 176
+            : 132
+        : 48;
     const vw = typeof window !== "undefined" ? window.innerWidth : e.clientX;
     const vh = typeof window !== "undefined" ? window.innerHeight : e.clientY;
     const x = Math.min(Math.max(pad, e.clientX), Math.max(pad, vw - approxW - pad));
@@ -992,7 +1074,84 @@ export default function SkillBrowseShell({
         <div className="page-header__title-bar">
           <div className="page-title__row">
             <h2>{title}</h2>
-            <span className="count-badge">{listedTotal}</span>
+            {dataSet === "aggregate" ? (
+              <>
+                <span className="count-badge">{listedTotal}</span>
+                <div
+                  className="seg page-header__assets-seg"
+                  role="tablist"
+                  aria-label={
+                    locale === "zh" ? "资产范围" : "Asset scope"
+                  }
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={aggregateAssetsTab === "all"}
+                    className={`seg__item${aggregateAssetsTab === "all" ? " active" : ""}`}
+                    onClick={() => setAggregateAssetsTab("all")}
+                  >
+                    {locale === "zh" ? "全部" : "All"}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={aggregateAssetsTab === "mine"}
+                    className={`seg__item${aggregateAssetsTab === "mine" ? " active" : ""}`}
+                    onClick={() => setAggregateAssetsTab("mine")}
+                  >
+                    {locale === "zh" ? "我的" : "Mine"}
+                    <span className="skill-copy-dialog__tab-badge">
+                      {mySkillsLib?.items.length ?? 0}
+                    </span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <span className="count-badge">{listedTotal}</span>
+            )}
+            {dataSet === "aggregate" && aggregateAssetsTab === "mine" ? (
+              <button
+                type="button"
+                className="page-header__my-import"
+                disabled={mySkillsImportBusy || refreshBusy}
+                onClick={() => {
+                  void (async () => {
+                    setMySkillsImportBusy(true);
+                    try {
+                      const picked = await open({
+                        directory: true,
+                        multiple: false,
+                      });
+                      const dir =
+                        typeof picked === "string"
+                          ? picked
+                          : Array.isArray(picked)
+                            ? picked[0] ?? null
+                            : null;
+                      if (!dir?.trim()) return;
+                      await addSkillToMyLibrary(dir.trim());
+                      setRefreshKey((k) => k + 1);
+                      setShellToast({
+                        at: Date.now(),
+                        message:
+                          locale === "zh"
+                            ? "已导入到「我的」"
+                            : "Imported to My skills",
+                      });
+                    } catch (e) {
+                      window.alert(
+                        `${locale === "zh" ? "导入失败" : "Import failed"}: ${String(e)}`,
+                      );
+                    } finally {
+                      setMySkillsImportBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {locale === "zh" ? "导入技能文件夹…" : "Import skill folder…"}
+              </button>
+            ) : null}
           </div>
           <PageRefreshButton
             onClick={onRefreshInventory}
@@ -1032,17 +1191,21 @@ export default function SkillBrowseShell({
         ) : null}
         {dataSet === "aggregate" ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
-            {aggregateLoading || aggregateSnapshot === null
+            {aggregateAssetsTab === "mine"
               ? locale === "zh"
-                ? "正在汇总各 Agent 用户级全局目录与侧栏已添加项目…"
-                : "Aggregating global assets and added projects…"
-              : aggregateSnapshot.anyInventoryFailed
+                ? "「我的」技能保存在本应用数据目录。在「全部」中右键技能选「复制到…」，在「用户全局」下选「AIControls『我的』技能库」即可加入；在「我的」中右键「应用到…」可部署到各 Agent 全局或侧栏项目。"
+                : "My skills live under app data. In All view, right-click → Copy to… → pick AIControls \"Mine\" under the Global tab; from Mine, Apply to deploy to agents and projects."
+              : aggregateLoading || aggregateSnapshot === null
                 ? locale === "zh"
-                  ? "部分目录读取失败，已展示可用结果。"
-                  : "Some directories failed to load; showing available results."
-                : locale === "zh"
-                  ? "包含所有已识别 Agent 的全局 Skills、MCP、Rules，以及「全部项目」中各目录的扫描结果。"
-                  : "Includes global assets from detected agents and scanned results from all projects."}
+                  ? "正在汇总各 Agent 用户级全局目录与侧栏已添加项目…"
+                  : "Aggregating global assets and added projects…"
+                : aggregateSnapshot.anyInventoryFailed
+                  ? locale === "zh"
+                    ? "部分目录读取失败，已展示可用结果。"
+                    : "Some directories failed to load; showing available results."
+                  : locale === "zh"
+                    ? "包含所有已识别 Agent 的全局 Skills、MCP、Rules，以及「全部项目」中各目录的扫描结果。"
+                    : "Includes global assets from detected agents and scanned results from all projects."}
           </p>
         ) : null}
       </div>
@@ -1068,24 +1231,30 @@ export default function SkillBrowseShell({
                 autoComplete="off"
               />
             </label>
-            <div
-              className="seg"
-              role="tablist"
-              aria-label={locale === "zh" ? "类型筛选" : "Type filter"}
-            >
-              {SEGMENT_KEYS.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  role="tab"
-                  aria-selected={filter === k}
-                  className={`seg__item${filter === k ? " active" : ""}`}
-                  onClick={() => setFilter(k)}
-                >
-                  {FILTER_LABEL[k]}
-                </button>
-              ))}
-            </div>
+            {dataSet === "aggregate" && aggregateAssetsTab === "mine" ? (
+              <span className="muted toolbar__mine-kind-hint">
+                {locale === "zh" ? "仅 Skill" : "Skills only"}
+              </span>
+            ) : (
+              <div
+                className="seg"
+                role="tablist"
+                aria-label={locale === "zh" ? "类型筛选" : "Type filter"}
+              >
+                {SEGMENT_KEYS.map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={filter === k}
+                    className={`seg__item${filter === k ? " active" : ""}`}
+                    onClick={() => setFilter(k)}
+                  >
+                    {FILTER_LABEL[k]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div
             className="scenario-strip"
@@ -1206,6 +1375,7 @@ export default function SkillBrowseShell({
               >
                 {locale === "zh" ? "在所在目录中显示" : "Show in folder"}
               </button>
+              {!cardContextMenu.row.id.startsWith("mine:") ? (
               <button
                 type="button"
                 role="menuitem"
@@ -1272,6 +1442,7 @@ export default function SkillBrowseShell({
               >
                 {locale === "zh" ? "重新生成简介" : "Regenerate brief"}
               </button>
+              ) : null}
               {cardContextMenu.row.kind === "skill" &&
               cardContextMenu.row.sourcePath?.trim() ? (
                 <>
@@ -1284,42 +1455,88 @@ export default function SkillBrowseShell({
                       setCardContextMenu(null);
                     }}
                   >
-                    {locale === "zh" ? "复制到…" : "Copy to…"}
+                    {cardContextMenu.row.id.startsWith("mine:")
+                      ? locale === "zh"
+                        ? "应用到…"
+                        : "Apply to…"
+                      : locale === "zh"
+                        ? "复制到…"
+                        : "Copy to…"}
                   </button>
-                  {skillBrowsePathIsDeletableFolder(
-                    cardContextMenu.row.sourcePath?.trim() ?? "",
-                  ) ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="card-context-menu__item card-context-menu__item--danger"
-                    onClick={() => {
-                      const row = cardContextMenu.row;
-                      const p = row.sourcePath?.trim();
-                      if (!p) return;
-                      const ok = window.confirm(
-                        locale === "zh"
-                          ? `确定要删除技能文件夹「${row.title}」吗？将删除整个文件夹及其中的文件，且无法撤销。`
-                          : `Delete skill folder "${row.title}"? This removes all files and cannot be undone.`,
-                      );
-                      setCardContextMenu(null);
-                      if (!ok) return;
-                      void (async () => {
-                        const r = await deleteSkillAtPath(p);
-                        if ("error" in r) {
-                          window.alert(`${locale === "zh" ? "删除失败" : "Delete failed"}: ${r.error}`);
-                          return;
-                        }
-                        setSelectedEntry((cur) =>
-                          cur?.path?.trim() === p ? null : cur,
+                  {cardContextMenu.row.id.startsWith("mine:") ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="card-context-menu__item card-context-menu__item--danger"
+                      onClick={() => {
+                        const row = cardContextMenu.row;
+                        const rawId = row.sourceId?.trim();
+                        setCardContextMenu(null);
+                        if (!rawId) return;
+                        const ok = window.confirm(
+                          locale === "zh"
+                            ? `从「我的」移除「${row.title}」？将删除本地副本。`
+                            : `Remove "${row.title}" from My skills? The local copy will be deleted.`,
                         );
-                        setShellToast({ at: Date.now(), message: locale === "zh" ? "已删除" : "Deleted" });
-                        onRefreshInventory();
-                      })();
-                    }}
-                  >
-                    {locale === "zh" ? "删除…" : "Delete…"}
-                  </button>
+                        if (!ok) return;
+                        void (async () => {
+                          try {
+                            await removeMySkill(rawId);
+                            setRefreshKey((k) => k + 1);
+                            setSelectedEntry((cur) =>
+                              cur?.path?.trim() === row.sourcePath?.trim()
+                                ? null
+                                : cur,
+                            );
+                            setShellToast({
+                              at: Date.now(),
+                              message:
+                                locale === "zh" ? "已从「我的」移除" : "Removed from My skills",
+                            });
+                          } catch (err) {
+                            window.alert(
+                              `${locale === "zh" ? "移除失败" : "Remove failed"}: ${String(err)}`,
+                            );
+                          }
+                        })();
+                      }}
+                    >
+                      {locale === "zh" ? "从「我的」移除…" : "Remove from My skills…"}
+                    </button>
+                  ) : skillBrowsePathIsDeletableFolder(
+                      cardContextMenu.row.sourcePath?.trim() ?? "",
+                    ) ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="card-context-menu__item card-context-menu__item--danger"
+                      onClick={() => {
+                        const row = cardContextMenu.row;
+                        const p = row.sourcePath?.trim();
+                        if (!p) return;
+                        const ok = window.confirm(
+                          locale === "zh"
+                            ? `确定要删除技能文件夹「${row.title}」吗？将删除整个文件夹及其中的文件，且无法撤销。`
+                            : `Delete skill folder "${row.title}"? This removes all files and cannot be undone.`,
+                        );
+                        setCardContextMenu(null);
+                        if (!ok) return;
+                        void (async () => {
+                          const r = await deleteSkillAtPath(p);
+                          if ("error" in r) {
+                            window.alert(`${locale === "zh" ? "删除失败" : "Delete failed"}: ${r.error}`);
+                            return;
+                          }
+                          setSelectedEntry((cur) =>
+                            cur?.path?.trim() === p ? null : cur,
+                          );
+                          setShellToast({ at: Date.now(), message: locale === "zh" ? "已删除" : "Deleted" });
+                          onRefreshInventory();
+                        })();
+                      }}
+                    >
+                      {locale === "zh" ? "删除…" : "Delete…"}
+                    </button>
                   ) : null}
                 </>
               ) : null}
@@ -1333,22 +1550,65 @@ export default function SkillBrowseShell({
             <SkillCopyDestinationDialog
               row={skillCopyTargetModalRow}
               sections={copyMenuSections}
+              dialogTitle={
+                skillCopyTargetModalRow.id.startsWith("mine:")
+                  ? locale === "zh"
+                    ? "应用到…"
+                    : "Apply to…"
+                  : undefined
+              }
               onClose={() => setSkillCopyTargetModalRow(null)}
               onChoose={(payload) => {
-                const src = skillCopyTargetModalRow.sourcePath?.trim();
+                const row = skillCopyTargetModalRow;
+                const src = row.sourcePath?.trim();
                 if (!src) return;
                 void (async () => {
+                  setSkillCopyTargetModalRow(null);
+                  if (payload.destKind === "myLibrary") {
+                    try {
+                      await addSkillToMyLibrary(src);
+                      setRefreshKey((k) => k + 1);
+                      setShellToast({
+                        at: Date.now(),
+                        message:
+                          locale === "zh"
+                            ? "已复制到「我的」"
+                            : "Copied to My skills",
+                      });
+                    } catch (err) {
+                      window.alert(
+                        `${locale === "zh" ? "复制到我的失败" : "Copy to My skills failed"}: ${String(err)}`,
+                      );
+                    }
+                    return;
+                  }
+
                   const r = await copySkillPackage({
                     sourcePath: src,
-                    ...payload,
+                    destKind: payload.destKind,
+                    agentId: payload.agentId,
+                    bucketIndex: payload.bucketIndex,
+                    projectRoot:
+                      payload.destKind === "project"
+                        ? payload.projectRoot
+                        : undefined,
                     onConflict: "suffix",
                   });
-                  setSkillCopyTargetModalRow(null);
                   if ("error" in r) {
                     window.alert(`${locale === "zh" ? "复制失败" : "Copy failed"}: ${r.error}`);
                     return;
                   }
-                  setShellToast({ at: Date.now(), message: locale === "zh" ? "复制成功" : "Copied" });
+                  const applied = row.id.startsWith("mine:");
+                  setShellToast({
+                    at: Date.now(),
+                    message: applied
+                      ? locale === "zh"
+                        ? "已应用"
+                        : "Applied"
+                      : locale === "zh"
+                        ? "复制成功"
+                        : "Copied",
+                  });
                 })();
               }}
             />,
@@ -1379,7 +1639,12 @@ export default function SkillBrowseShell({
       {listedTotal === 0 &&
       !(ecosystem && dataSet === "skills" && (liveLoading || liveFailed)) &&
       !(dataSet === "project" && projectLoading) &&
-      !(dataSet === "aggregate" && (aggregateLoading || aggregateSnapshot === null)) ? (
+      !(
+        dataSet === "aggregate" &&
+        aggregateAssetsTab === "all" &&
+        (aggregateLoading || aggregateSnapshot === null)
+      ) &&
+      !(dataSet === "aggregate" && aggregateAssetsTab === "mine" && mySkillsLoading) ? (
         <p className="muted" style={{ marginTop: "1rem" }}>
           {dataSet === "project"
             ? !projectRoot
@@ -1392,9 +1657,13 @@ export default function SkillBrowseShell({
                   ? "所选目录下未发现条目，或没有符合当前筛选的结果。"
                   : "No entries found in selected directory, or no matches for current filters."
             : dataSet === "aggregate"
-              ? locale === "zh"
-                ? "未发现任何条目，或没有符合当前筛选的结果。"
-                : "No entries found, or no matches for current filters."
+              ? aggregateAssetsTab === "mine"
+                ? locale === "zh"
+                  ? "「我的」中暂无技能。可使用上方「导入技能文件夹」，或在「全部」中右键「复制到…」→「用户全局」下选「AIControls『我的』技能库」。"
+                  : 'No skills in Mine yet. Use "Import skill folder", or in All view right-click → Copy to… → pick AIControls "Mine" under the Global tab.'
+                : locale === "zh"
+                  ? "未发现任何条目，或没有符合当前筛选的结果。"
+                  : "No entries found, or no matches for current filters."
               : ecosystem && dataSet === "skills"
                 ? locale === "zh"
                   ? "没有符合条件的全局条目。"

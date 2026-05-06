@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
@@ -7,8 +7,37 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::my_skills_library;
 use crate::scan::extract_skill_declared_name;
 use crate::skill_copy;
+use tauri::AppHandle;
+
+fn finalize_github_import_dest(
+    app: &AppHandle,
+    source_dir: &Path,
+    dest_kind: &str,
+    agent_id: &str,
+    bucket_index: usize,
+    project_root: Option<&str>,
+    on_conflict_suffix: bool,
+) -> Result<String, String> {
+    if dest_kind == "myLibrary" {
+        let entry = my_skills_library::add_skill_to_my_library(
+            app,
+            source_dir.to_string_lossy().into_owned(),
+        )?;
+        Ok(entry.path)
+    } else {
+        skill_copy::perform_copy(
+            source_dir.to_string_lossy().as_ref(),
+            dest_kind,
+            agent_id,
+            bucket_index,
+            project_root,
+            on_conflict_suffix,
+        )
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,6 +256,7 @@ pub async fn detect_github_repo_skills(repo_url: &str) -> Result<GithubSkillDete
 }
 
 pub async fn import_github_skill_to_destination(
+    app: &AppHandle,
     repo_url: &str,
     skill_path: &str,
     dest_kind: &str,
@@ -324,8 +354,9 @@ pub async fn import_github_skill_to_destination(
         if renamed_dir != source_dir {
             fs::rename(&source_dir, &renamed_dir)
                 .map_err(|e| format!("设置技能目录名失败: {e}"))?;
-            let result = skill_copy::perform_copy(
-                renamed_dir.to_string_lossy().as_ref(),
+            let result = finalize_github_import_dest(
+                app,
+                &renamed_dir,
                 dest_kind,
                 agent_id,
                 bucket_index,
@@ -337,8 +368,9 @@ pub async fn import_github_skill_to_destination(
         }
     }
 
-    let result = skill_copy::perform_copy(
-        source_dir.to_string_lossy().as_ref(),
+    let result = finalize_github_import_dest(
+        app,
+        &source_dir,
         dest_kind,
         agent_id,
         bucket_index,
