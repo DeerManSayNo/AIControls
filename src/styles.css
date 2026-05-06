@@ -2113,6 +2113,76 @@ main {
   font-weight: 600;
 }
 
+.scenario-chip--custom {
+  border-style: dashed;
+}
+
+.scenario-chip--action {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+  padding: 0.32rem;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.scenario-chip--action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+  color: var(--text);
+}
+
+.scenario-chip--action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.scenario-chip--confirm {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.scenario-chip--confirm:hover {
+  background: var(--accent-muted);
+}
+
+.scenario-chip--cancel {
+  color: var(--text-secondary);
+}
+
+.scenario-chip--cancel:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+}
+
+.scenario-chip--status {
+  border-color: var(--border);
+  color: var(--text-secondary);
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.scenario-chip--status__pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .toolbar__deepseek-status {
   margin: 0;
   font-size: 0.8125rem;

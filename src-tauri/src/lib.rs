@@ -164,6 +164,40 @@ async fn deepseek_enrich_resource_url(
     deepseek::enrich_resource_from_url(&app, url).await
 }
 
+#[tauri::command]
+async fn deepseek_regenerate_categories(
+    app: AppHandle,
+    inventory: AgentInventory,
+) -> Result<Vec<deepseek::CustomCategory>, String> {
+    deepseek::regenerate_categories(&app, inventory).await
+}
+
+#[tauri::command]
+async fn deepseek_reclassify_with_new_categories(
+    app: AppHandle,
+    inventory: AgentInventory,
+    categories: Vec<deepseek::CustomCategory>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    deepseek::reclassify_with_new_categories(&app, inventory, categories).await
+}
+
+#[tauri::command]
+fn get_custom_categories(app: AppHandle) -> Result<Vec<deepseek::CustomCategory>, String> {
+    storage::load_custom_categories(&app)
+}
+
+#[tauri::command]
+fn clear_custom_categories(app: AppHandle) -> Result<(), String> {
+    storage::clear_custom_categories(&app)
+}
+
+#[tauri::command]
+fn reset_all_categories(app: AppHandle) -> Result<(), String> {
+    storage::clear_custom_categories(&app)?;
+    storage::clear_scenario_map(&app)?;
+    Ok(())
+}
+
 /// 在系统文件管理器中打开路径：文件则打开其所在文件夹并选中；文件夹则打开该文件夹。
 #[tauri::command]
 fn reveal_path_in_folder(path: String) -> Result<(), String> {
@@ -550,6 +584,11 @@ pub fn run() {
             deepseek_summarize_inventory,
             deepseek_resummarize_asset,
             deepseek_enrich_resource_url,
+            deepseek_regenerate_categories,
+            deepseek_reclassify_with_new_categories,
+            get_custom_categories,
+            clear_custom_categories,
+            reset_all_categories,
             reveal_path_in_folder,
             open_project_path,
             get_project_latest_mtime_ms,

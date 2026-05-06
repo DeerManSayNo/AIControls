@@ -532,3 +532,230 @@ pub async fn enrich_resource_from_url(
 
     Ok(ResourceUrlEnrichment { title, tags, note })
 }
+
+// ── 重新分类：生成新分类 + 按新分类重新归类 ──────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCategory {
+    pub slug: String,
+    pub label_zh: String,
+}
+
+fn regenerate_categories_system_prompt() -> String {
+    r#"你是 AIControls 的分类生成助手。输入是用户所有 Skill / MCP / Rule 的标题与描述信息。
+请分析这些资产，总结出 5 到 8 个分类。严格要求：
+1) 每个分类的中文名必须是 **恰好 2 个中文字**，例如"开发""设计""运维"；
+2) 每个分类同时提供一个英文 slug（小写、用下划线连接，如 dev_tools）；
+3) 分类之间互斥、覆盖尽可能全面；
+4) 不用解释，直接输出 JSON。
+
+只输出一个 JSON 数组，每个元素是 { "slug": "xxx", "labelZh": "XX" }。
+不要 Markdown，不要多余字段。"#
+        .to_string()
+}
+
+fn reclassify_with_categories_system_prompt(categories: &[CustomCategory]) -> String {
+    let cat_lines: Vec<String> = categories
+        .iter()
+        .map(|c| format!("{} — {}", c.slug, c.label_zh))
+        .collect();
+    format!(
+        r#"你是 AIControls 的资产分类助手。输入是多条 Skill / MCP / Rule 的简要信息。
+必须为每一条选出 **恰好一个** 分类 slug，只能从下列集合中选：
+{}
+
+只输出 **一个 JSON 对象**：键为每条资产的 id（字符串），值为 slug。
+不要 Markdown，不要解释，不要多余字段。"#,
+        cat_lines.join("\n")
+    )
+}
+
+/// 让 AI 分析所有资产的 title/description，生成一组新的 2 字中文分类。
+pub async fn regenerate_categories(
+    app: &AppHandle,
+    inventory: AgentInventory,
+) -> Result<Vec<CustomCategory>, String> {
+    let api_key = storage::load_deepseek_api_key(app)?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+
+    let all_entries: Vec<&AssetEntry> = inventory
+        .skills
+        .iter()
+        .chain(inventory.mcp.iter())
+        .chain(inventory.rules.iter())
+        .collect();
+
+    if all_entries.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut lines = Vec::new();
+    for e in &all_entries {
+        lines.push(format!(
+            "- title={} description={}",
+            serde_json::to_string(&e.title).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.description).map_err(|e| e.to_string())?,
+        ));
+    }
+    let user = format!(
+        "请根据下列资产信息，生成新的分类方案：\n{}",
+        lines.join("\n")
+    );
+
+    let raw = chat_completion(
+        &api_key,
+        &regenerate_categories_system_prompt(),
+        &user,
+        true,
+        600,
+    )
+    .await?;
+
+    let v = extract_json_object(&raw)?;
+    let arr = v
+        .as_array()
+        .ok_or_else(|| "模型返回的不是 JSON 数组".to_string())?;
+
+    let mut categories = Vec::new();
+    for item in arr {
+        let slug = item
+            .get("slug")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let label_zh = item
+            .get("labelZh")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if slug.is_empty() || label_zh.is_empty() {
+            continue;
+        }
+        // 验证中文标签恰好 2 个字符
+        let cjk_count = label_zh
+            .chars()
+            .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+            .count();
+        if cjk_count == 0 {
+            continue;
+        }
+        categories.push(CustomCategory { slug, label_zh });
+    }
+
+    if categories.is_empty() {
+        return Err("AI 未返回有效的分类方案".to_string());
+    }
+
+    Ok(categories)
+}
+
+/// 使用自定义分类列表重新归类所有资产，返回 id → newSlug 映射；同时持久化到本地缓存。
+pub async fn reclassify_with_new_categories(
+    app: &AppHandle,
+    inventory: AgentInventory,
+    categories: Vec<CustomCategory>,
+) -> Result<HashMap<String, String>, String> {
+    let api_key = storage::load_deepseek_api_key(app)?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+
+    let all_entries: Vec<AssetEntry> = inventory
+        .skills
+        .iter()
+        .chain(inventory.mcp.iter())
+        .chain(inventory.rules.iter())
+        .cloned()
+        .collect();
+
+    if all_entries.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let slug_set: HashSet<&str> = categories.iter().map(|c| c.slug.as_str()).collect();
+    let system = reclassify_with_categories_system_prompt(&categories);
+
+    const BATCH: usize = 12;
+    let mut merged = HashMap::new();
+
+    for chunk in all_entries.chunks(BATCH) {
+        let mut lines = Vec::new();
+        for e in chunk {
+            lines.push(format!(
+                "- id={} kind={} title={} description={}",
+                serde_json::to_string(&e.id).map_err(|e| e.to_string())?,
+                serde_json::to_string(&e.kind).map_err(|e| e.to_string())?,
+                serde_json::to_string(&e.title).map_err(|e| e.to_string())?,
+                serde_json::to_string(&e.description).map_err(|e| e.to_string())?,
+            ));
+        }
+        let user = format!(
+            "请为下列条目分类（输出 JSON 对象 id→slug）：\n{}",
+            lines.join("\n")
+        );
+
+        match chat_completion(&api_key, &system, &user, true, 800).await {
+            Ok(raw) => {
+                if let Ok(v) = extract_json_object(&raw) {
+                    if let Some(obj) = v.as_object() {
+                        for (id, val) in obj {
+                            if let Some(slug) = val.as_str() {
+                                let s = slug.trim().to_lowercase();
+                                if slug_set.contains(s.as_str()) {
+                                    merged.insert(id.clone(), s);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // batch 失败则跳过
+            }
+        }
+    }
+
+    // 补全缺失条目（单条重试）
+    for e in &all_entries {
+        if merged.contains_key(&e.id) {
+            continue;
+        }
+        let lines = vec![format!(
+            "- id={} kind={} title={} description={}",
+            serde_json::to_string(&e.id).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.kind).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.title).map_err(|e| e.to_string())?,
+            serde_json::to_string(&e.description).map_err(|e| e.to_string())?,
+        )];
+        let user = format!(
+            "请为下列条目分类（输出 JSON 对象 id→slug）：\n{}",
+            lines.join("\n")
+        );
+        if let Ok(raw) = chat_completion(&api_key, &system, &user, true, 200).await {
+            if let Ok(v) = extract_json_object(&raw) {
+                if let Some(obj) = v.as_object() {
+                    for (id, val) in obj {
+                        if let Some(slug) = val.as_str() {
+                            let s = slug.trim().to_lowercase();
+                            if slug_set.contains(s.as_str()) {
+                                merged.insert(id.clone(), s);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 将新分类结果持久化到本地 scenario map
+    if !merged.is_empty() {
+        storage::merge_scenario_map(app, &merged)?;
+        // 同时持久化自定义分类列表，后续加载时使用
+        storage::save_custom_categories(app, &categories)?;
+    }
+
+    Ok(merged)
+}

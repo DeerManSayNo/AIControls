@@ -151,6 +151,14 @@ fn save_scenario_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(
     Ok(())
 }
 
+pub fn clear_scenario_map(app: &AppHandle) -> Result<(), String> {
+    let path = scenario_map_path(app)?;
+    if path.is_file() {
+        fs::remove_file(&path).map_err(|e| format!("删除分类缓存失败：{e}"))?;
+    }
+    Ok(())
+}
+
 fn save_brief_map(
     app: &AppHandle,
     locale: &str,
@@ -161,6 +169,45 @@ fn save_brief_map(
     let json =
         serde_json::to_string_pretty(map).map_err(|e| format!("序列化缩略介绍缓存失败：{e}"))?;
     fs::write(path, json).map_err(|e| format!("写入缩略介绍缓存失败：{e}"))?;
+    Ok(())
+}
+
+// --- Gitee OAuth / backup ---
+
+// --- Custom categories (persisted after reclassify confirm) ---
+
+fn custom_categories_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("custom_categories.json"))
+}
+
+pub fn load_custom_categories(app: &AppHandle) -> Result<Vec<crate::deepseek::CustomCategory>, String> {
+    let path = custom_categories_path(app)?;
+    if !path.is_file() {
+        return Ok(vec![]);
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let v: Vec<crate::deepseek::CustomCategory> =
+        serde_json::from_str(&text).map_err(|e| format!("读取自定义分类失败：{e}"))?;
+    Ok(v)
+}
+
+pub fn save_custom_categories(
+    app: &AppHandle,
+    categories: &[crate::deepseek::CustomCategory],
+) -> Result<(), String> {
+    let path = custom_categories_path(app)?;
+    ensure_parent(&path)?;
+    let json =
+        serde_json::to_string_pretty(categories).map_err(|e| format!("序列化自定义分类失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入自定义分类失败：{e}"))?;
+    Ok(())
+}
+
+pub fn clear_custom_categories(app: &AppHandle) -> Result<(), String> {
+    let path = custom_categories_path(app)?;
+    if path.is_file() {
+        fs::remove_file(&path).map_err(|e| format!("删除自定义分类文件失败：{e}"))?;
+    }
     Ok(())
 }
 

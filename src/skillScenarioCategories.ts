@@ -398,12 +398,10 @@ export function browseRowHaystack(row: {
   return `${row.title}\n${row.desc}\n${row.sourcePath ?? ""}`;
 }
 
-const SCENARIO_SLUG_SET = new Set<string>(SCENARIO_ORDER);
-
 export function isAiScenarioSlug(
   s: string | null | undefined,
 ): s is Exclude<ScenarioKey, "all"> {
-  return !!s && SCENARIO_SLUG_SET.has(s);
+  return !!s && s.trim() !== "";
 }
 
 /** 优先使用 AI 写入的 `scenario`，否则沿用关键词启发式。 */
@@ -421,4 +419,14 @@ export function rowMatchesScenarioChip(
     return row.scenario === scenario;
   }
   return rowMatchesScenario(browseRowHaystack(row), scenario);
+}
+
+/** 使用自定义分类 slug 进行匹配（重新分类后使用）。 */
+export function rowMatchesCustomScenario(
+  row: {
+    scenario?: string | null;
+  },
+  slug: string,
+): boolean {
+  return row.scenario === slug;
 }

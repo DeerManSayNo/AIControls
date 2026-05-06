@@ -90,3 +90,66 @@ export type ResourceUrlEnrichment = {
 export async function deepseekEnrichResourceUrl(url: string): Promise<ResourceUrlEnrichment> {
   return invoke<ResourceUrlEnrichment>("deepseek_enrich_resource_url", { url });
 }
+
+/** AI 生成的自定义分类 */
+export type CustomCategory = {
+  slug: string;
+  labelZh: string;
+};
+
+/** 让 AI 分析所有资产，生成一组新的 2 字中文分类方案。 */
+export async function deepseekRegenerateCategories(
+  inventory: AgentInventory,
+): Promise<CustomCategory[] | null> {
+  try {
+    return await invoke<CustomCategory[]>("deepseek_regenerate_categories", {
+      inventory,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** 使用自定义分类列表重新归类所有资产，返回 id → newSlug 映射。 */
+export async function deepseekReclassifyWithCategories(
+  inventory: AgentInventory,
+  categories: CustomCategory[],
+): Promise<Record<string, string> | null> {
+  try {
+    return await invoke<Record<string, string>>(
+      "deepseek_reclassify_with_new_categories",
+      { inventory, categories },
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** 从本地持久化加载自定义分类列表。 */
+export async function getCustomCategories(): Promise<CustomCategory[]> {
+  try {
+    return await invoke<CustomCategory[]>("get_custom_categories");
+  } catch {
+    return [];
+  }
+}
+
+/** 清除本地持久化的自定义分类，恢复默认分类。 */
+export async function clearCustomCategories(): Promise<boolean> {
+  try {
+    await invoke("clear_custom_categories");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 重置所有分类：清除自定义分类 + 清除 AI 分类缓存，恢复到最初默认分类。 */
+export async function resetAllCategories(): Promise<boolean> {
+  try {
+    await invoke("reset_all_categories");
+    return true;
+  } catch {
+    return false;
+  }
+}

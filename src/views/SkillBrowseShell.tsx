@@ -11,9 +11,14 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import {
   deepseekClassifyInventory,
+  deepseekRegenerateCategories,
+  deepseekReclassifyWithCategories,
   deepseekResummarizeAsset,
   deepseekSummarizeInventory,
+  getCustomCategories as loadCustomCategoriesFromStorage,
   getDeepseekSettings,
+  resetAllCategories,
+  type CustomCategory,
 } from "../api/deepseek";
 import {
   getAgentGlobalInventoryCached,
@@ -42,6 +47,7 @@ import {
   getScenarioHint,
   getScenarioLabel,
   rowMatchesScenarioChip,
+  rowMatchesCustomScenario,
   SCENARIO_ORDER,
   type ScenarioKey,
 } from "../skillScenarioCategories";
@@ -391,6 +397,12 @@ export default function SkillBrowseShell({
   const [mySkillsLoading, setMySkillsLoading] = useState(false);
   const [mySkillsImportBusy, setMySkillsImportBusy] = useState(false);
 
+  // ── 重新分类状态 ──
+  const [reclassifyMode, setReclassifyMode] = useState<"idle" | "generating" | "reviewing" | "applying">("idle");
+  const [customCategories, setCustomCategories] = useState<CustomCategory[] | null>(null);
+  const [customScenario, setCustomScenario] = useState<string>("all");
+  const [savedSnapshotBackup, setSavedSnapshotBackup] = useState<AggregateSnapshot | null>(null);
+
   const onRefreshInventory = useCallback(() => {
     if (dataSet === "aggregate") {
       invalidateCachedAgentGlobalInventory();
@@ -403,6 +415,81 @@ export default function SkillBrowseShell({
     }
     setRefreshKey((k) => k + 1);
   }, [dataSet, ecosystem, projectRoot]);
+
+  // ── 重新分类回调 ──
+  const handleReclassifyStart = useCallback(async () => {
+    if (!aggregateSnapshot) return;
+    const cfg = await getDeepseekSettings();
+    if (!cfg?.apiKeyConfigured) return;
+    setReclassifyMode("generating");
+    const merged = dedupeMergeInventories(
+      [
+        ...aggregateSnapshot.agents.map((a) => a.inv).filter((x): x is AgentInventory => !!x),
+        ...aggregateSnapshot.projects.map((p) => p.inv).filter((x): x is AgentInventory => !!x),
+      ],
+    );
+    const cats = await deepseekRegenerateCategories(merged);
+    if (!cats) {
+      setReclassifyMode("idle");
+      return;
+    }
+    if (!savedSnapshotBackup) {
+      setSavedSnapshotBackup(aggregateSnapshot);
+    }
+    setCustomCategories(cats);
+    setCustomScenario("all");
+    setReclassifyMode("reviewing");
+  }, [aggregateSnapshot, savedSnapshotBackup]);
+
+  const handleReclassifyConfirm = useCallback(async () => {
+    if (!aggregateSnapshot || !customCategories) return;
+    setReclassifyMode("applying");
+    const merged = dedupeMergeInventories(
+      [
+        ...aggregateSnapshot.agents.map((a) => a.inv).filter((x): x is AgentInventory => !!x),
+        ...aggregateSnapshot.projects.map((p) => p.inv).filter((x): x is AgentInventory => !!x),
+      ],
+    );
+    const mapping = await deepseekReclassifyWithCategories(merged, customCategories);
+    if (mapping) {
+      // 保存成功，触发完整重新加载以从持久化存储中读取新的 scenario 数据
+      setReclassifyMode("idle");
+      setSavedSnapshotBackup(null);
+      setCustomScenario("all");
+      // customCategories 保留，因为它们已被持久化，重新加载后仍会使用
+      setRefreshKey((k) => k + 1);
+    } else {
+      setReclassifyMode("idle");
+      setCustomCategories(null);
+      setCustomScenario("all");
+      setSavedSnapshotBackup(null);
+    }
+  }, [aggregateSnapshot, customCategories]);
+
+  const handleReclassifyCancel = useCallback(() => {
+    if (savedSnapshotBackup) {
+      setAggregateSnapshot(savedSnapshotBackup);
+    }
+    setReclassifyMode("idle");
+    setCustomCategories(null);
+    setCustomScenario("all");
+    setSavedSnapshotBackup(null);
+  }, [savedSnapshotBackup]);
+
+  const handleResetCategories = useCallback(async () => {
+    const msg = locale === "zh"
+      ? "确定要重置为默认分类吗？所有 AI 分类结果将被清除。"
+      : "Reset to default categories? All AI classification results will be cleared.";
+    if (!window.confirm(msg)) return;
+    const ok = await resetAllCategories();
+    if (ok) {
+      setCustomCategories(null);
+      setCustomScenario("all");
+      invalidateCachedAgentGlobalInventory();
+      invalidateCachedProjectInventory();
+      setRefreshKey((k) => k + 1);
+    }
+  }, [locale]);
 
   const refreshBusy =
     (dataSet === "skills" &&
@@ -437,6 +524,17 @@ export default function SkillBrowseShell({
     if (dataSet !== "aggregate") setAggregateAssetsTab("all");
   }, [dataSet]);
 
+  // 加载持久化的自定义分类（重新分类确认后保存的）
+  useEffect(() => {
+    let cancelled = false;
+    loadCustomCategoriesFromStorage().then((cats) => {
+      if (!cancelled && cats && cats.length > 0) {
+        setCustomCategories(cats);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
   useEffect(() => {
     if (dataSet === "aggregate" && aggregateAssetsTab === "mine") {
       setFilter("all");
@@ -445,7 +543,7 @@ export default function SkillBrowseShell({
   }, [dataSet, aggregateAssetsTab]);
 
   useEffect(() => {
-    if (dataSet !== "aggregate" || aggregateAssetsTab !== "mine") return;
+    if (dataSet !== "aggregate") return;
     let cancelled = false;
     setMySkillsLoading(true);
     void getMySkillsLibrary()
@@ -461,7 +559,7 @@ export default function SkillBrowseShell({
     return () => {
       cancelled = true;
     };
-  }, [dataSet, aggregateAssetsTab, refreshKey]);
+  }, [dataSet, refreshKey]);
 
   useEffect(() => {
     if (!cardContextMenu) return;
@@ -721,9 +819,10 @@ export default function SkillBrowseShell({
     };
   }, [dataSet, projectPaths, refreshKey, locale]);
 
-  const { sections, scenarioCounts } = useMemo((): {
+  const { sections, scenarioCounts, customCategoryCounts } = useMemo((): {
     sections: BrowseSection[];
     scenarioCounts: Record<ScenarioKey, number>;
+    customCategoryCounts: Record<string, number> | null;
   } => {
     const empty = zeroScenarioCounts();
 
@@ -745,8 +844,25 @@ export default function SkillBrowseShell({
     };
 
     const applyScenarioFilter = (rows: BrowseRow[]): BrowseRow[] => {
+      const useCustom = (reclassifyMode === "reviewing" || reclassifyMode === "generating" || reclassifyMode === "applying" || reclassifyMode === "idle")
+        && customCategories && customCategories.length > 0;
+      if (useCustom) {
+        if (customScenario === "all") return rows;
+        return rows.filter((row) => rowMatchesCustomScenario(row, customScenario));
+      }
       if (scenario === "all") return rows;
       return rows.filter((row) => rowMatchesScenarioChip(row, scenario));
+    };
+
+    // ── 辅助函数：从过滤前的 rows 计算自定义分类计数 ──
+    const computeCustomCategoryCounts = (rows: BrowseRow[]): Record<string, number> | null => {
+      if (!customCategories || customCategories.length === 0) return null;
+      if (reclassifyMode !== "reviewing" && reclassifyMode !== "generating" && reclassifyMode !== "applying" && reclassifyMode !== "idle") return null;
+      const counts: Record<string, number> = { all: rows.length };
+      for (const cat of customCategories) {
+        counts[cat.slug] = rows.filter((row) => rowMatchesCustomScenario(row, cat.slug)).length;
+      }
+      return counts;
     };
 
     if (dataSet === "aggregate" && aggregateAssetsTab === "mine") {
@@ -764,25 +880,27 @@ export default function SkillBrowseShell({
         scenario: null,
       }));
       const scenarioCounts = scenarioCountsFromRows(mineRows);
+      const customCatCounts = computeCustomCategoryCounts(mineRows);
       const filtered = applyScenarioFilter(applyKindAndQuery(mineRows));
       return {
         sections: [{ key: "mine-grid", title: "", rows: filtered }],
         scenarioCounts,
+        customCategoryCounts: customCatCounts,
       };
     }
 
     if (dataSet === "project") {
       if (!projectRoot) {
-        return { sections: [], scenarioCounts: empty };
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
       }
       if (projectLoading && projectInv === undefined) {
-        return { sections: [], scenarioCounts: empty };
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
       }
       if (projectFailed) {
-        return { sections: [], scenarioCounts: empty };
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
       }
       if (!projectInv) {
-        return { sections: [], scenarioCounts: empty };
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
       }
       const buckets = bucketInventoryByAgent(projectInv);
       const out: BrowseSection[] = [];
@@ -802,15 +920,16 @@ export default function SkillBrowseShell({
       }
       out.sort((a, b) => b.rows.length - a.rows.length);
       const scenarioCounts = scenarioCountsFromRows(out.flatMap((s) => s.rows));
+      const customCatCounts = computeCustomCategoryCounts(out.flatMap((s) => s.rows));
       const filtered = out
         .map((s) => ({ ...s, rows: applyScenarioFilter(s.rows) }))
         .filter((s) => s.rows.length > 0);
-      return { sections: filtered, scenarioCounts };
+      return { sections: filtered, scenarioCounts, customCategoryCounts: customCatCounts };
     }
 
     if (dataSet === "aggregate") {
       if (aggregateLoading || aggregateSnapshot === null) {
-        return { sections: [], scenarioCounts: empty };
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
       }
       let rows: BrowseRow[] = [];
       for (const a of aggregateSnapshot.agents) {
@@ -844,13 +963,14 @@ export default function SkillBrowseShell({
       }
       rows = applyKindAndQuery(rows);
       const scenarioCounts = scenarioCountsFromRows(rows);
+      const customCatCounts = computeCustomCategoryCounts(rows);
       rows = applyScenarioFilter(rows);
-      return { sections: [{ key: "aggregate", title: "", rows }], scenarioCounts };
+      return { sections: [{ key: "aggregate", title: "", rows }], scenarioCounts, customCategoryCounts: customCatCounts };
     }
 
     if (ecosystem && dataSet === "skills") {
       if (liveLoading && liveInv === undefined) {
-        return { sections: [], scenarioCounts: empty };
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
       }
 
       const globalKey = `global:${ecosystem}`;
@@ -887,6 +1007,9 @@ export default function SkillBrowseShell({
       const scenarioCounts = scenarioCountsFromRows(
         allForCounts.flatMap((s) => s.rows),
       );
+      const customCatCounts = computeCustomCategoryCounts(
+        allForCounts.flatMap((s) => s.rows),
+      );
       const globalSectionFiltered: BrowseSection = {
         ...globalSection,
         rows: applyScenarioFilter(globalSection.rows),
@@ -898,10 +1021,11 @@ export default function SkillBrowseShell({
       return {
         sections: [globalSectionFiltered, ...projectSectionsNonEmpty],
         scenarioCounts,
+        customCategoryCounts: customCatCounts,
       };
     }
 
-    return { sections: [], scenarioCounts: empty };
+    return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
   }, [
     dataSet,
     ecosystem,
@@ -921,6 +1045,9 @@ export default function SkillBrowseShell({
     locale,
     aggregateAssetsTab,
     mySkillsLib,
+    reclassifyMode,
+    customCategories,
+    customScenario,
   ]);
 
   useEffect(() => {
@@ -963,6 +1090,18 @@ export default function SkillBrowseShell({
   );
 
   const listedTotal = sections.reduce((n, s) => n + s.rows.length, 0);
+
+  const assetsTotalBadge = useMemo(() => {
+    if (dataSet !== "aggregate") return listedTotal;
+    const allCount = aggregateSnapshot
+      ? [...aggregateSnapshot.agents, ...aggregateSnapshot.projects].reduce(
+          (n, a) => n + (a.inv ? a.inv.skills.length + a.inv.mcp.length + a.inv.rules.length : 0),
+          0,
+        )
+      : 0;
+    const mineCount = mySkillsLib?.items.length ?? 0;
+    return allCount + mineCount;
+  }, [dataSet, listedTotal, aggregateSnapshot, mySkillsLib]);
 
   const toggleSectionExpanded = (sectionKey: string) => {
     setExpandedSectionKeys((prev) => {
@@ -1076,7 +1215,7 @@ export default function SkillBrowseShell({
             <h2>{title}</h2>
             {dataSet === "aggregate" ? (
               <>
-                <span className="count-badge">{listedTotal}</span>
+                <span className="count-badge">{assetsTotalBadge}</span>
                 <div
                   className="seg page-header__assets-seg"
                   role="tablist"
@@ -1261,30 +1400,133 @@ export default function SkillBrowseShell({
             role="tablist"
             aria-label={locale === "zh" ? "场景分类" : "Scenario filter"}
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={scenario === "all"}
-              title={locale === "zh" ? "展示全部 Skill、MCP 与 Rules" : "Show all Skills, MCP and Rules"}
-              className={`scenario-chip${scenario === "all" ? " active" : ""}`}
-              onClick={() => setScenario("all")}
-            >
-              {getScenarioLabel(locale, "all")} ({scenarioCounts.all})
-            </button>
-            {SCENARIO_ORDER.map((key) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={scenario === key}
-                title={getScenarioHint(locale, key)}
-                className={`scenario-chip${scenario === key ? " active" : ""}`}
-                onClick={() => setScenario(key)}
-              >
-                {getScenarioLabel(locale, key)} ({scenarioCounts[key]})
-              </button>
-            ))}
+            {((reclassifyMode === "reviewing" || reclassifyMode === "generating" || reclassifyMode === "applying") || (reclassifyMode === "idle" && customCategories && customCategories.length > 0)) && customCategoryCounts ? (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={customScenario === "all"}
+                  title={locale === "zh" ? "展示全部" : "Show all"}
+                  className={`scenario-chip${customScenario === "all" ? " active" : ""}`}
+                  onClick={() => setCustomScenario("all")}
+                >
+                  {locale === "zh" ? "全部" : "All"} ({customCategoryCounts.all})
+                </button>
+                {customCategories!.map((cat) => (
+                  <button
+                    key={cat.slug}
+                    type="button"
+                    role="tab"
+                    aria-selected={customScenario === cat.slug}
+                    title={cat.labelZh}
+                    className={`scenario-chip scenario-chip--custom${customScenario === cat.slug ? " active" : ""}`}
+                    onClick={() => setCustomScenario(cat.slug)}
+                  >
+                    {cat.labelZh} ({customCategoryCounts[cat.slug] ?? 0})
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={scenario === "all"}
+                  title={locale === "zh" ? "展示全部 Skill、MCP 与 Rules" : "Show all Skills, MCP and Rules"}
+                  className={`scenario-chip${scenario === "all" ? " active" : ""}`}
+                  onClick={() => setScenario("all")}
+                >
+                  {getScenarioLabel(locale, "all")} ({scenarioCounts.all})
+                </button>
+                {SCENARIO_ORDER.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={scenario === key}
+                    title={getScenarioHint(locale, key)}
+                    className={`scenario-chip${scenario === key ? " active" : ""}`}
+                    onClick={() => setScenario(key)}
+                  >
+                    {getScenarioLabel(locale, key)} ({scenarioCounts[key]})
+                  </button>
+                ))}
+              </>
+            )}
+            {dataSet === "aggregate" && aggregateAssetsTab === "all" && (
+              <>
+                {reclassifyMode === "idle" && (
+                  <>
+                    <button
+                      type="button"
+                      className="scenario-chip scenario-chip--action"
+                      title={locale === "zh" ? "重新分类" : "Reclassify"}
+                      disabled={aiScenarioBusy || aiBriefBusy || aggregateLoading}
+                      onClick={handleReclassifyStart}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" />
+                      </svg>
+                    </button>
+                    {customCategories && customCategories.length > 0 && (
+                      <button
+                        type="button"
+                        className="scenario-chip scenario-chip--action"
+                        title={locale === "zh" ? "重置为默认分类" : "Reset to default categories"}
+                        onClick={handleResetCategories}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" />
+                        </svg>
+                      </button>
+                    )}
+                  </>
+                )}
+                {reclassifyMode === "generating" && (
+                  <span className="scenario-chip scenario-chip--status">
+                    <span className="scenario-chip--status__pulse" />
+                    {locale === "zh" ? "生成中…" : "Generating…"}
+                  </span>
+                )}
+                {reclassifyMode === "reviewing" && (
+                  <>
+                    <button
+                      type="button"
+                      className="scenario-chip scenario-chip--action"
+                      title={locale === "zh" ? "重新生成" : "Regenerate"}
+                      disabled={aiScenarioBusy || aiBriefBusy || aggregateLoading}
+                      onClick={handleReclassifyStart}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className="scenario-chip scenario-chip--confirm"
+                      onClick={handleReclassifyConfirm}
+                    >
+                      {locale === "zh" ? "确定" : "Confirm"}
+                    </button>
+                    <button
+                      type="button"
+                      className="scenario-chip scenario-chip--cancel"
+                      onClick={handleReclassifyCancel}
+                    >
+                      {locale === "zh" ? "取消" : "Cancel"}
+                    </button>
+                  </>
+                )}
+                {reclassifyMode === "applying" && (
+                  <span className="scenario-chip scenario-chip--status">
+                    <span className="scenario-chip--status__pulse" />
+                    {locale === "zh" ? "应用中…" : "Applying…"}
+                  </span>
+                )}
+              </>
+            )}
           </div>
+          {dataSet === "aggregate" && aggregateAssetsTab === "all" ? null : null}
           {aiScenarioBusy || aiBriefBusy ? (
             <p
               className="muted toolbar__deepseek-status"
