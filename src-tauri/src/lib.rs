@@ -399,6 +399,142 @@ async fn get_project_latest_mtime_ms(root: String) -> Result<i64, String> {
     .map_err(|e| format!("扫描任务失败: {e}"))?
 }
 
+#[derive(serde::Serialize)]
+struct ProjectGitInfo {
+    is_repo: bool,
+    branch: Option<String>,
+    branches: Vec<String>,
+    remote_url: Option<String>,
+    remote_name: Option<String>,
+    last_commit_hash: Option<String>,
+    last_commit_message: Option<String>,
+    last_commit_author: Option<String>,
+    last_commit_date: Option<String>,
+}
+
+fn git_command_output(dir: &std::path::Path, args: &[&str]) -> Option<String> {
+    use std::process::Command;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_branches(dir: &std::path::Path) -> Vec<String> {
+    use std::process::Command;
+    let output = match Command::new("git")
+        .args(["branch", "--format=%(refname:short)"])
+        .current_dir(dir)
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// 检测项目目录的 Git 仓库信息。
+#[tauri::command]
+async fn detect_project_git_info(root: String) -> Result<ProjectGitInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() {
+            return Err("路径不是文件夹".into());
+        }
+
+        let is_repo = dir.join(".git").is_dir();
+        if !is_repo {
+            return Ok(ProjectGitInfo {
+                is_repo: false,
+                branch: None,
+                branches: Vec::new(),
+                remote_url: None,
+                remote_name: None,
+                last_commit_hash: None,
+                last_commit_message: None,
+                last_commit_author: None,
+                last_commit_date: None,
+            });
+        }
+
+        let branch = git_command_output(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let branches = git_branches(dir);
+        let remote_url = git_command_output(dir, &["config", "--get", "remote.origin.url"]);
+        let remote_name = remote_url.as_ref().and_then(|_| {
+            git_command_output(dir, &["config", "--get", "remote.origin.name"])
+        });
+        let last_commit_hash = git_command_output(dir, &["log", "-1", "--format=%h"]);
+        let last_commit_message = git_command_output(dir, &["log", "-1", "--format=%s"]);
+        let last_commit_author = git_command_output(dir, &["log", "-1", "--format=%an"]);
+        let last_commit_date = git_command_output(dir, &["log", "-1", "--format=%ar"]);
+
+        Ok(ProjectGitInfo {
+            is_repo: true,
+            branch,
+            branches,
+            remote_url,
+            remote_name,
+            last_commit_hash,
+            last_commit_message,
+            last_commit_author,
+            last_commit_date,
+        })
+    })
+    .await
+    .map_err(|e| format!("检测任务失败: {e}"))?
+}
+
+#[derive(serde::Serialize)]
+struct BranchCommitInfo {
+    hash: Option<String>,
+    message: Option<String>,
+    author: Option<String>,
+    date: Option<String>,
+}
+
+/// 获取指定分支的最近一次提交信息。
+#[tauri::command]
+async fn detect_branch_commit_info(
+    root: String,
+    branch: String,
+) -> Result<BranchCommitInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() {
+            return Err("路径不是文件夹".into());
+        }
+        if !dir.join(".git").is_dir() {
+            return Err("不是 Git 仓库".into());
+        }
+
+        let b = branch.trim();
+        if b.is_empty() {
+            return Err("分支名为空".into());
+        }
+
+        Ok(BranchCommitInfo {
+            hash: git_command_output(dir, &["log", "-1", "--format=%h", b]),
+            message: git_command_output(dir, &["log", "-1", "--format=%s", b]),
+            author: git_command_output(dir, &["log", "-1", "--format=%an", b]),
+            date: git_command_output(dir, &["log", "-1", "--format=%ar", b]),
+        })
+    })
+    .await
+    .map_err(|e| format!("检测任务失败: {e}"))?
+}
+
 #[tauri::command]
 fn list_visible_project_skill_buckets(
     project_root: String,
@@ -592,6 +728,8 @@ pub fn run() {
             reveal_path_in_folder,
             open_project_path,
             get_project_latest_mtime_ms,
+            detect_project_git_info,
+            detect_branch_commit_info,
             copy_skill_package,
             delete_skill_at_path,
             detect_github_repo_skills,

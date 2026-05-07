@@ -1,4 +1,4 @@
-import { useMemo, useState, useId } from "react";
+import { useEffect, useMemo, useState, useId } from "react";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import { DetailSheet } from "../components/DetailSheet";
 import { useProjectPaths } from "../projectPathsStorage";
@@ -8,6 +8,12 @@ import {
   setStageForProject,
   useProjectStagesMap,
 } from "../projectStageStorage";
+import {
+  type ProjectGitInfo,
+  type BranchCommitInfo,
+  detectProjectGitInfo,
+  detectBranchCommitInfo,
+} from "../api/projectGit";
 
 type ActivityLevel = "high" | "very-high" | "medium" | "low";
 
@@ -257,12 +263,181 @@ function StagePicker({
   );
 }
 
+function GitIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden>
+      <path
+        fill="currentColor"
+        d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.21.68-.47v-1.65c-2.77.6-3.35-1.18-3.35-1.18-.46-1.15-1.1-1.46-1.1-1.46-.9-.62.07-.61.07-.61 1 .07 1.52 1.01 1.52 1.01.88 1.49 2.31 1.06 2.88.8.09-.63.35-1.06.63-1.3-2.21-.25-4.54-1.09-4.54-4.85 0-1.07.39-1.94 1.02-2.62-.1-.25-.44-1.27.1-2.64 0 0 .84-.26 2.75 1a9.63 9.63 0 0 1 5.02 0c1.91-1.26 2.75-1 2.75-1 .54 1.37.2 2.39.1 2.64.64.68 1.02 1.55 1.02 2.62 0 3.77-2.33 4.6-4.56 4.85.36.31.67.92.67 1.86v2.75c0 .26.18.57.69.47A10 10 0 0 0 12 2Z"
+      />
+    </svg>
+  );
+}
+
+function BranchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={14} height={14} aria-hidden>
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        d="M6 3v12m12-12v6a6 6 0 0 1-6 6H6"
+      />
+      <circle cx="6" cy="18" r="2" fill="currentColor" />
+      <circle cx="18" cy="6" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+
+function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: string }) {
+  const currentBranch = git.branch;
+  const allBranches = git.branches;
+  const defaultBranch = currentBranch ?? allBranches[0] ?? null;
+  const otherBranches = allBranches.filter((b) => b !== currentBranch);
+
+  const [viewingBranch, setViewingBranch] = useState<string | null>(null);
+  const [branchCommit, setBranchCommit] = useState<BranchCommitInfo | null>(null);
+
+  const activeBranch = viewingBranch ?? defaultBranch;
+
+  useEffect(() => {
+    if (!git.is_repo || !activeBranch || !projectPath) {
+      setBranchCommit(null);
+      return;
+    }
+    if (viewingBranch === null && currentBranch) {
+      setBranchCommit({
+        hash: git.last_commit_hash,
+        message: git.last_commit_message,
+        author: git.last_commit_author,
+        date: git.last_commit_date,
+      });
+      return;
+    }
+    let cancelled = false;
+    void detectBranchCommitInfo(projectPath, activeBranch).then((info) => {
+      if (!cancelled) setBranchCommit(info);
+    });
+    return () => { cancelled = true; };
+  }, [git.is_repo, viewingBranch, activeBranch, projectPath, currentBranch,
+      git.last_commit_hash, git.last_commit_message, git.last_commit_author, git.last_commit_date]);
+
+  useEffect(() => {
+    setViewingBranch(null);
+  }, [git.branch]);
+
+  if (!git.is_repo) {
+    return (
+      <div className="git-info git-info--empty">
+        <GitIcon />
+        <span>未检测到 Git 仓库</span>
+      </div>
+    );
+  }
+
+  const handleBranchClick = (branch: string) => {
+    if (branch === currentBranch && viewingBranch === null) return;
+    if (branch === currentBranch) {
+      setViewingBranch(null);
+    } else {
+      setViewingBranch(branch);
+    }
+  };
+
+  return (
+    <div className="git-info">
+      <div className="git-info__header">
+        <GitIcon />
+        <span className="git-info__label">Git 仓库</span>
+      </div>
+      <dl className="git-info__list">
+        {currentBranch && (
+          <div className="git-info__row">
+            <dt><BranchIcon /> 当前分支</dt>
+            <dd>
+              <button
+                type="button"
+                className={`git-info__branch-btn${currentBranch === activeBranch ? " git-info__branch-btn--active" : ""} git-info__branch-btn--head`}
+                onClick={() => handleBranchClick(currentBranch)}
+                title={`${currentBranch} (HEAD)`}
+              >
+                {currentBranch}
+                <em>HEAD</em>
+              </button>
+            </dd>
+          </div>
+        )}
+        {otherBranches.length > 0 && (
+          <div className="git-info__row">
+            <dt><BranchIcon /> 其他分支</dt>
+            <dd className="git-info__branches">
+              {otherBranches.map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  className={`git-info__branch-btn${b === activeBranch ? " git-info__branch-btn--active" : ""}`}
+                  onClick={() => handleBranchClick(b)}
+                  title={`查看 ${b}`}
+                >
+                  {b}
+                </button>
+              ))}
+            </dd>
+          </div>
+        )}
+        {git.remote_url && (
+          <div className="git-info__row">
+            <dt>远程地址</dt>
+            <dd className="git-info__remote">{git.remote_url}</dd>
+          </div>
+        )}
+        {branchCommit && branchCommit.hash && (
+          <div className="git-info__row">
+            <dt>最近提交</dt>
+            <dd>
+              <span className="git-info__hash">{branchCommit.hash}</span>
+              {branchCommit.message && (
+                <span className="git-info__msg">{branchCommit.message}</span>
+              )}
+            </dd>
+          </div>
+        )}
+        {branchCommit && branchCommit.author && (
+          <div className="git-info__row">
+            <dt>提交者</dt>
+            <dd>
+              <span>{branchCommit.author}</span>
+              {branchCommit.date && (
+                <span className="git-info__date"> · {branchCommit.date}</span>
+              )}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+}
+
 export default function ProjectBoardPage() {
   const searchId = useId();
   const projectPaths = useProjectPaths();
   const stagesMap = useProjectStagesMap();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [gitInfo, setGitInfo] = useState<ProjectGitInfo | null>(null);
+
+  useEffect(() => {
+    if (!selectedPath) {
+      setGitInfo(null);
+      return;
+    }
+    let cancelled = false;
+    void detectProjectGitInfo(selectedPath).then((info) => {
+      if (!cancelled) setGitInfo(info);
+    });
+    return () => { cancelled = true; };
+  }, [selectedPath]);
 
   const projects = useMemo<BoardProject[]>(() => {
     return projectPaths.map((path) => {
@@ -391,6 +566,7 @@ export default function ProjectBoardPage() {
         description={selectedPath ?? ""}
         onClose={() => setSelectedPath(null)}
       >
+        {gitInfo && <GitInfoBlock git={gitInfo} projectPath={selectedPath!} />}
         <div className="stage-picker-section">
           <h3 className="stage-picker-section__title">项目阶段</h3>
           <p className="stage-picker-section__hint">选择项目当前所处的开发阶段</p>
