@@ -1,5 +1,6 @@
 //! AIControls — scan installed agents and global skills / MCP / rules.
 
+mod code_metrics;
 mod deepseek;
 mod gitee;
 mod github_import;
@@ -399,6 +400,228 @@ async fn get_project_latest_mtime_ms(root: String) -> Result<i64, String> {
     .map_err(|e| format!("扫描任务失败: {e}"))?
 }
 
+/// 使用 tokei 统计项目目录的代码行数。
+#[tauri::command]
+async fn count_project_code_lines(root: String) -> Result<code_metrics::CodeLineResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        code_metrics::count_code_lines(std::path::Path::new(root.trim()))
+    })
+    .await
+    .map_err(|e| format!("统计任务失败: {e}"))?
+}
+
+/// 读取项目目录下 package.json 中的 version 字段。
+#[tauri::command]
+async fn read_package_version(root: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pkg_path = std::path::Path::new(root.trim()).join("package.json");
+        if !pkg_path.is_file() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&pkg_path)
+            .map_err(|e| format!("读取 package.json 失败: {e}"))?;
+        let val: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("解析 package.json 失败: {e}"))?;
+        let version = val.get("version")
+            .and_then(|v| v.as_str())
+            .map(|v| {
+                if v.starts_with('v') { v.to_string() } else { format!("v{v}") }
+            });
+        Ok(version)
+    })
+    .await
+    .map_err(|e| format!("读取任务失败: {e}"))?
+}
+
+/// AI 评估 MVP 项目的完成进度。
+#[tauri::command]
+async fn estimate_project_progress(app: AppHandle, root: String) -> Result<deepseek::ProjectProgressResult, String> {
+    deepseek::estimate_project_progress(&app, root).await
+}
+
+/// 统计近 N 天内的 Git 提交数量（用于计算项目活跃度）。
+#[tauri::command]
+async fn git_commit_count_last_n_days(root: String, days: u32) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() {
+            return Err("路径不是文件夹".into());
+        }
+        if !dir.join(".git").is_dir() {
+            return Ok(0);
+        }
+        let since = format!("--since={}.days", days);
+        let count = git_command_output(dir, &["log", "--oneline", &since])
+            .map(|s| s.lines().count() as u32)
+            .unwrap_or(0);
+        Ok(count)
+    })
+    .await
+    .map_err(|e| format!("统计任务失败: {e}"))?
+}
+
+/// 返回最近 12 周每周的提交数量（从最旧到最新）。
+#[tauri::command]
+async fn git_weekly_commit_counts(root: String) -> Result<Vec<u32>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() || !dir.join(".git").is_dir() {
+            return Ok(vec![0u32; 12]);
+        }
+
+        let mut weeks = Vec::with_capacity(12);
+        for w in (0..12).rev() {
+            let since = format!("--since={}.weeks", w + 1);
+            let until = format!("--until={}.weeks", w);
+            let count = git_command_output(dir, &["log", "--oneline", &since, &until])
+                .map(|s| {
+                    let n = s.lines().filter(|l| !l.trim().is_empty()).count() as u32;
+                    n
+                })
+                .unwrap_or(0);
+            weeks.push(count);
+        }
+        Ok(weeks)
+    })
+    .await
+    .map_err(|e| format!("统计任务失败: {e}"))?
+}
+
+/// 返回 Git 仓库的贡献者列表（按提交数降序）。
+#[derive(serde::Serialize)]
+struct Contributor {
+    name: String,
+    email: String,
+    commits: u32,
+}
+
+#[tauri::command]
+async fn git_contributors(root: String) -> Result<Vec<Contributor>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() || !dir.join(".git").is_dir() {
+            return Ok(vec![]);
+        }
+        // shortlog -sne outputs lines like "  123\tName <email>"
+        let output = git_command_output(dir, &["shortlog", "-sne", "HEAD"]);
+        let raw = match output {
+            Some(s) => s,
+            None => return Ok(vec![]),
+        };
+        let mut list = Vec::new();
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            // Parse: "  count\tName <email>"
+            let Some(tab_pos) = line.find('\t') else { continue };
+            let count_str = line[..tab_pos].trim();
+            let info = &line[tab_pos + 1..];
+            let commits: u32 = count_str.parse().unwrap_or(0);
+            // Extract name and email from "Name <email>"
+            let (name, email) = if let Some(lt) = info.rfind('<') {
+                let name_part = info[..lt].trim().to_string();
+                let email_part = if let Some(gt) = info.rfind('>') {
+                    info[lt + 1..gt].trim().to_string()
+                } else {
+                    info[lt + 1..].trim().to_string()
+                };
+                (name_part, email_part)
+            } else {
+                (info.to_string(), String::new())
+            };
+            list.push(Contributor { name, email, commits });
+        }
+        Ok(list)
+    })
+    .await
+    .map_err(|e| format!("统计任务失败: {e}"))?
+}
+
+/// 检查 Git 仓库是否有未提交的本地修改。
+#[derive(serde::Serialize)]
+struct LocalChangeStatus {
+    has_changes: bool,
+    details: String,
+}
+
+#[tauri::command]
+async fn git_check_local_changes(root: String) -> Result<LocalChangeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() || !dir.join(".git").is_dir() {
+            return Ok(LocalChangeStatus {
+                has_changes: false,
+                details: "非 Git 仓库".to_string(),
+            });
+        }
+        // staged + unstaged + untracked
+        let staged = git_command_output(dir, &["diff", "--cached", "--stat"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let unstaged = git_command_output(dir, &["diff", "--stat"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let untracked = git_command_output(dir, &["ls-files", "--others", "--exclude-standard"])
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0);
+
+        let has_staged = !staged.is_empty();
+        let has_unstaged = !unstaged.is_empty();
+        let has_untracked = untracked > 0;
+
+        let mut parts = Vec::new();
+        if has_staged {
+            let n = staged.lines().count();
+            parts.push(format!("{} 个文件已暂存", n));
+        }
+        if has_unstaged {
+            let n = unstaged.lines().count();
+            parts.push(format!("{} 个文件已修改", n));
+        }
+        if untracked > 0 {
+            parts.push(format!("{} 个未跟踪文件", untracked));
+        }
+
+        let has_changes = has_staged || has_unstaged || has_untracked;
+        let details = if parts.is_empty() {
+            "无本地修改".to_string()
+        } else {
+            parts.join("，")
+        };
+
+        Ok(LocalChangeStatus { has_changes, details })
+    })
+    .await
+    .map_err(|e| format!("检查任务失败: {e}"))?
+}
+
+/// 执行 git pull 拉取最新代码。
+#[tauri::command]
+async fn git_pull(root: String) -> Result<String, String> {
+    let handle = tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::Path::new(root.trim());
+        if !dir.is_dir() || !dir.join(".git").is_dir() {
+            return Err("不是 Git 仓库".to_string());
+        }
+        use std::process::Command;
+        let output = Command::new("git")
+            .args(["pull"])
+            .current_dir(dir)
+            .output()
+            .map_err(|e| format!("执行 git pull 失败: {e}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !output.status.success() {
+            return Err(if stderr.is_empty() { stdout } else { stderr });
+        }
+        Ok(if stdout.is_empty() { stderr } else { stdout })
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .map_err(|_| "网络超时，拉取失败。请检查网络连接后重试".to_string())?
+        .map_err(|e| format!("拉取任务失败: {e}"))?
+}
+
 #[derive(serde::Serialize)]
 struct ProjectGitInfo {
     is_repo: bool,
@@ -728,6 +951,14 @@ pub fn run() {
             reveal_path_in_folder,
             open_project_path,
             get_project_latest_mtime_ms,
+            count_project_code_lines,
+            read_package_version,
+            estimate_project_progress,
+            git_commit_count_last_n_days,
+            git_weekly_commit_counts,
+            git_contributors,
+            git_check_local_changes,
+            git_pull,
             detect_project_git_info,
             detect_branch_commit_info,
             copy_skill_package,

@@ -759,3 +759,164 @@ pub async fn reclassify_with_new_categories(
 
     Ok(merged)
 }
+
+// ── 项目进度估算 ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectProgressResult {
+    pub progress: u32,
+    pub summary: String,
+}
+
+fn progress_system_prompt() -> String {
+    r#"你是一个资深的项目进度评估助手。根据给出的项目信息，评估该项目从 MVP 角度的完成进度。
+评估标准：
+1) 0-20%：仅有脚手架/配置文件，几乎没有业务代码；
+2) 20-40%：有基本的项目结构和少量功能代码；
+3) 40-60%：核心功能已初步实现，部分功能仍缺失；
+4) 60-80%：主要功能完成，需要打磨和完善细节；
+5) 80-95%：功能基本完整，进入测试和修复阶段；
+6) 95-100%：项目已成熟，可上线或已上线。
+
+只输出一个 JSON 对象，字段：
+- progress：整数 0-100，表示完成百分比；
+- summary：一句话中文评估（不超过 50 字）。
+不要 Markdown，不要其他字段。"#
+        .to_string()
+}
+
+pub async fn estimate_project_progress(app: &AppHandle, root: String) -> Result<ProjectProgressResult, String> {
+    let api_key = storage::load_deepseek_api_key(app)?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+
+    let root_path = std::path::Path::new(root.trim());
+    if !root_path.is_dir() {
+        return Err("路径不是文件夹".into());
+    }
+
+    // Collect project context
+    let mut context_parts: Vec<String> = Vec::new();
+
+    // 1. package.json info
+    let pkg_path = root_path.join("package.json");
+    if pkg_path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&pkg_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0");
+                let desc = val.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let deps_count = val.get("dependencies")
+                    .and_then(|v| v.as_object())
+                    .map(|o| o.len())
+                    .unwrap_or(0);
+                let dev_deps_count = val.get("devDependencies")
+                    .and_then(|v| v.as_object())
+                    .map(|o| o.len())
+                    .unwrap_or(0);
+                let scripts_count = val.get("scripts")
+                    .and_then(|v| v.as_object())
+                    .map(|o| o.len())
+                    .unwrap_or(0);
+                context_parts.push(format!(
+                    "项目名称: {}, 版本: {}, 描述: {}, 依赖数: {}, 开发依赖数: {}, 脚本数: {}",
+                    name, version, desc, deps_count, dev_deps_count, scripts_count
+                ));
+            }
+        }
+    }
+
+    // 2. Top-level directory structure (first level only)
+    let mut top_dirs: Vec<String> = Vec::new();
+    let mut top_files: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root_path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                top_dirs.push(name);
+            } else {
+                top_files.push(name);
+            }
+        }
+    }
+    top_dirs.sort();
+    top_files.sort();
+    if !top_dirs.is_empty() {
+        context_parts.push(format!("顶层目录: {}", top_dirs.join(", ")));
+    }
+    if !top_files.is_empty() {
+        context_parts.push(format!("顶层文件: {}", top_files.join(", ")));
+    }
+
+    // 3. Key directory existence checks
+    let key_dirs = ["src", "src-tauri", "app", "pages", "components", "lib", "test", "tests", "__tests__", "docs", "public", "dist", "build"];
+    let existing: Vec<&str> = key_dirs.iter()
+        .filter(|d| root_path.join(d).is_dir())
+        .copied()
+        .collect();
+    if !existing.is_empty() {
+        context_parts.push(format!("关键目录存在: {}", existing.join(", ")));
+    }
+
+    // 4. README existence
+    if root_path.join("README.md").is_file() || root_path.join("README").is_file() {
+        context_parts.push("README: 存在".to_string());
+    } else {
+        context_parts.push("README: 不存在".to_string());
+    }
+
+    // 5. Code line counts (from tokei)
+    if let Ok(stats) = crate::code_metrics::count_code_lines(root_path) {
+        context_parts.push(format!(
+            "代码统计: 总行数 {}, 代码行 {}, 注释行 {}, 空行 {}, 文件数 {}, 语言: {}",
+            stats.total_lines,
+            stats.code_lines,
+            stats.comment_lines,
+            stats.blank_lines,
+            stats.files,
+            stats.languages.iter().take(5).map(|l| format!("{}({})", l.language, l.code_lines)).collect::<Vec<_>>().join(", ")
+        ));
+    }
+
+    // 6. Git info
+    if root_path.join(".git").is_dir() {
+        let commit_count = crate::git_command_output(root_path, &["rev-list", "--count", "HEAD"])
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "未知".to_string());
+        let branch = crate::git_command_output(root_path, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap_or_else(|| "unknown".to_string());
+        context_parts.push(format!("Git: {} 次提交, 当前分支 {}", commit_count, branch));
+    }
+
+    if context_parts.is_empty() {
+        return Ok(ProjectProgressResult {
+            progress: 5,
+            summary: "项目目录为空或无法读取".to_string(),
+        });
+    }
+
+    let user = format!(
+        "请评估以下项目的 MVP 完成进度：\n{}",
+        context_parts.join("\n")
+    );
+
+    let raw = chat_completion(&api_key, &progress_system_prompt(), &user, true, 300).await?;
+    let v = extract_json_object(&raw)?;
+
+    let progress = v.get("progress")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(50)
+        .min(100) as u32;
+
+    let summary = v.get("summary")
+        .and_then(|x| x.as_str())
+        .unwrap_or("无法评估")
+        .trim()
+        .to_string();
+
+    Ok(ProjectProgressResult { progress, summary })
+}
