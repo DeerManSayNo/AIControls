@@ -23,6 +23,15 @@ export function NavIconHome({ className, ...props }: IconProps) {
   );
 }
 
+export function NavIconBoard({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={["nav-icon--nudge-1", className].filter(Boolean).join(" ")}>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <circle cx="12" cy="12" r="2.25" />
+    </svg>
+  );
+}
+
 /** 汇总 / 全部资产 */
 export function NavIconLayers({ className, ...props }: IconProps) {
   return (

@@ -14,6 +14,7 @@ import AgentNavLinks from "./components/AgentNavLinks";
 import ProjectNavItem from "./components/ProjectNavItem";
 import {
   NavIconHome,
+  NavIconBoard,
   NavIconLayers,
   NavIconFolder,
   NavIconPrompt,
@@ -29,6 +30,7 @@ import SettingsPage from "./views/SettingsPage";
 import SkillBrowseShell from "./views/SkillBrowseShell";
 import PromptLibraryPage from "./views/PromptLibraryPage";
 import ResourceLibraryPage from "./views/ResourceLibraryPage";
+import ProjectBoardPage from "./views/ProjectBoardPage";
 import { useI18n } from "./i18n/provider";
 
 function navClass(active: boolean) {
@@ -76,6 +78,17 @@ function Layout({ children }: { children: ReactNode }) {
     }
   }, [pathFromUrl]);
 
+  useEffect(() => {
+    if (pathname === "/board") {
+      setAgentsCollapsed(true);
+      try {
+        window.localStorage.setItem("aicontrols-nav-collapse-agents", "1");
+      } catch {
+        // ignore
+      }
+    }
+  }, [pathname]);
+
   const activeProjectPath =
     pathname === "/project" ? searchParams.get("path") : null;
 
@@ -98,6 +111,17 @@ function Layout({ children }: { children: ReactNode }) {
             </span>
             <span className="side-nav-link__label side-nav-link__label--cjk-optical">
               {t("nav.home")}
+            </span>
+          </NavLink>
+          <NavLink
+            to="/board"
+            className={({ isActive }) => navClass(isActive)}
+          >
+            <span className="side-nav-link__icon">
+              <NavIconBoard />
+            </span>
+            <span className="side-nav-link__label side-nav-link__label--cjk-optical">
+              {t("nav.board")}
             </span>
           </NavLink>
           <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
@@ -268,6 +292,7 @@ export default function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<ShellPage title="Home" />} />
+        <Route path="/board" element={<ProjectBoardPage />} />
         <Route
           path="/assets"
           element={<SkillBrowseShell title="Assets" dataSet="aggregate" />}

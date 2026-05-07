@@ -13,7 +13,8 @@ export const zhMessages: Messages = {
   "nav.main": "主导航",
   "nav.tagline": "控制台",
   "nav.home": "首页",
-  "nav.assets": "全部",
+  "nav.board": "项目看板",
+  "nav.assets": "全部项目",
   "nav.prompts": "Prompt 库",
   "nav.resources": "资源库",
   "nav.projects": "全部项目",
@@ -41,7 +42,8 @@ export const enMessages: Messages = {
   "nav.main": "Main Navigation",
   "nav.tagline": "Console",
   "nav.home": "Home",
-  "nav.assets": "Assets",
+  "nav.board": "Project Board",
+  "nav.assets": "All Projects",
   "nav.prompts": "Prompt Library",
   "nav.resources": "Resource Library",
   "nav.projects": "All Projects",
@@ -62,4 +64,3 @@ export const allMessages: Record<Locale, Messages> = {
   zh: zhMessages,
   en: enMessages,
 };
-
