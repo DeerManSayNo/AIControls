@@ -83,6 +83,41 @@ type PendingGithubImport = {
   skills: GithubSkillCandidate[];
 };
 
+type HomeLiveStatus = {
+  message: string;
+  detail?: string;
+  completed: number;
+  total: number;
+};
+
+function HomeLiveProgress({ status }: { status: HomeLiveStatus }) {
+  const progress =
+    status.total > 0
+      ? Math.min(100, Math.round((status.completed / status.total) * 100))
+      : 0;
+
+  return (
+    <div
+      className="board-live-progress board-live-progress--scanning"
+      role="status"
+      aria-live="polite"
+      aria-label={`首页扫描进度：${status.message}`}
+    >
+      <span className="board-live-progress__pulse" aria-hidden />
+      <span className="board-live-progress__body">
+        <strong>{status.message}</strong>
+        {status.detail ? <em>{status.detail}</em> : null}
+      </span>
+      <span className="board-live-progress__meta">
+        {status.total > 0 ? `${status.completed}/${status.total}` : "--"}
+      </span>
+      <span className="board-live-progress__bar" aria-hidden>
+        <span style={{ width: `${progress}%` }} />
+      </span>
+    </div>
+  );
+}
+
 export default function ShellPage({ subtitle }: Props) {
   const { locale } = useI18n();
   const navigate = useNavigate();
@@ -109,6 +144,11 @@ export default function ShellPage({ subtitle }: Props) {
   >({});
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [homeScanBusy, setHomeScanBusy] = useState(false);
+  const [homeLiveStatus, setHomeLiveStatus] = useState<HomeLiveStatus>({
+    message: locale === "zh" ? "等待扫描" : "Waiting",
+    completed: 0,
+    total: 0,
+  });
   const [githubImportBusy, setGithubImportBusy] = useState(false);
   const [githubSkillPickModal, setGithubSkillPickModal] =
     useState<GithubDetectedSkillsModalState | null>(null);
@@ -147,74 +187,126 @@ export default function ShellPage({ subtitle }: Props) {
     }
 
     setHomeScanBusy(true);
-    void (async () => {
-      try {
-        const [agentInventories, scanInventories, mtimeList] = await Promise.all([
-          Promise.all(agentIds.map((id) => getAgentGlobalInventoryCached(id))),
-          Promise.all(scanRoots.map((root) => scanProjectDirectoryCached(root))),
-          Promise.all(scanRoots.map((root) => getProjectLatestMtimeMsCached(root))),
-        ]);
-        if (cancelled) return;
+    const agentInventories: Array<AgentInventory | null> = Array(agentIds.length).fill(null);
+    const scanInventories: Array<AgentInventory | null> = Array(scanRoots.length).fill(null);
+    const mtimeList: Array<number | null> = Array(scanRoots.length).fill(null);
+    const totalTasks = agentIds.length + scanRoots.length * 2;
+    let completed = 0;
 
-        const skillIds = new Set<string>();
-        const mcpIds = new Set<string>();
-        const ruleIds = new Set<string>();
-        const addInventory = (inv: AgentInventory | null) => {
-          if (!inv) return;
-          for (const e of inv.skills) skillIds.add(e.id);
-          for (const e of inv.mcp) mcpIds.add(e.id);
-          for (const e of inv.rules) ruleIds.add(e.id);
-        };
+    const updateProgress = (message: string, detail?: string) => {
+      if (cancelled) return;
+      setHomeLiveStatus({
+        message,
+        detail,
+        completed,
+        total: totalTasks,
+      });
+    };
 
-        for (const inv of agentInventories) addInventory(inv);
-        for (const inv of scanInventories) addInventory(inv);
+    const finishTask = (message: string, detail?: string) => {
+      completed += 1;
+      updateProgress(message, detail);
+      if (completed !== totalTasks || cancelled) return;
 
-        const nextProjectStats: Record<
-          string,
-          {
-            skills: number;
-            mcp: number;
-            rules: number;
-            status: "ok" | "error";
-            topAgent: string;
-          }
-        > = {};
-        const nextProjectMtime: Record<string, number | null> = {};
-        for (let i = 0; i < scanRoots.length; i += 1) {
-          const root = scanRoots[i];
-          const inv = scanInventories[i];
-          nextProjectMtime[root] = mtimeList[i] ?? null;
-          if (inv) {
-            const topBucket = bucketInventoryByAgent(inv).sort(
-              (a, b) => inventoryAssetCount(b.inv) - inventoryAssetCount(a.inv),
-            )[0];
-            nextProjectStats[root] = {
-              ...summarizeInventory(inv),
-              status: "ok",
-              topAgent: topBucket ? fallbackAgentLabel(topBucket.agentId) : locale === "zh" ? "未识别" : "Unknown",
-            };
-          } else {
-            nextProjectStats[root] = {
-              skills: 0,
-              mcp: 0,
-              rules: 0,
-              status: "error",
-              topAgent: locale === "zh" ? "扫描失败" : "Scan failed",
-            };
-          }
+      const skillIds = new Set<string>();
+      const mcpIds = new Set<string>();
+      const ruleIds = new Set<string>();
+      const addInventory = (inv: AgentInventory | null) => {
+        if (!inv) return;
+        for (const e of inv.skills) skillIds.add(e.id);
+        for (const e of inv.mcp) mcpIds.add(e.id);
+        for (const e of inv.rules) ruleIds.add(e.id);
+      };
+
+      for (const inv of agentInventories) addInventory(inv);
+      for (const inv of scanInventories) addInventory(inv);
+
+      const nextProjectStats: Record<
+        string,
+        {
+          skills: number;
+          mcp: number;
+          rules: number;
+          status: "ok" | "error";
+          topAgent: string;
         }
-
-        setProjectStats(nextProjectStats);
-        setProjectLatestMtimeMs(nextProjectMtime);
-        setTotals({
-          skills: skillIds.size,
-          mcp: mcpIds.size,
-          rules: ruleIds.size,
-        });
-      } finally {
-        if (!cancelled) setHomeScanBusy(false);
+      > = {};
+      const nextProjectMtime: Record<string, number | null> = {};
+      for (let i = 0; i < scanRoots.length; i += 1) {
+        const root = scanRoots[i];
+        const inv = scanInventories[i];
+        nextProjectMtime[root] = mtimeList[i] ?? null;
+        if (inv) {
+          const topBucket = bucketInventoryByAgent(inv).sort(
+            (a, b) => inventoryAssetCount(b.inv) - inventoryAssetCount(a.inv),
+          )[0];
+          nextProjectStats[root] = {
+            ...summarizeInventory(inv),
+            status: "ok",
+            topAgent: topBucket ? fallbackAgentLabel(topBucket.agentId) : locale === "zh" ? "未识别" : "Unknown",
+          };
+        } else {
+          nextProjectStats[root] = {
+            skills: 0,
+            mcp: 0,
+            rules: 0,
+            status: "error",
+            topAgent: locale === "zh" ? "扫描失败" : "Scan failed",
+          };
+        }
       }
-    })();
+
+      setProjectStats(nextProjectStats);
+      setProjectLatestMtimeMs(nextProjectMtime);
+      setTotals({
+        skills: skillIds.size,
+        mcp: mcpIds.size,
+        rules: ruleIds.size,
+      });
+      setHomeScanBusy(false);
+    };
+
+    updateProgress(locale === "zh" ? "准备扫描首页" : "Preparing scan", `${totalTasks} tasks`);
+
+    agentIds.forEach((id, index) => {
+      updateProgress(locale === "zh" ? "正在扫描 Agent 资产" : "Scanning agent assets", fallbackAgentLabel(id));
+      void getAgentGlobalInventoryCached(id)
+        .then((inv) => {
+          if (cancelled) return;
+          agentInventories[index] = inv;
+          finishTask(locale === "zh" ? "已完成 Agent 资产" : "Agent assets done", fallbackAgentLabel(id));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          finishTask(locale === "zh" ? "Agent 资产扫描失败" : "Agent assets failed", fallbackAgentLabel(id));
+        });
+    });
+
+    scanRoots.forEach((root, index) => {
+      updateProgress(locale === "zh" ? "正在扫描项目资产" : "Scanning project assets", folderBasename(root));
+      void scanProjectDirectoryCached(root)
+        .then((inv) => {
+          if (cancelled) return;
+          scanInventories[index] = inv;
+          finishTask(locale === "zh" ? "已完成项目资产" : "Project assets done", folderBasename(root));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          finishTask(locale === "zh" ? "项目资产扫描失败" : "Project assets failed", folderBasename(root));
+        });
+
+      updateProgress(locale === "zh" ? "正在读取最近修改" : "Reading latest update", folderBasename(root));
+      void getProjectLatestMtimeMsCached(root)
+        .then((mtime) => {
+          if (cancelled) return;
+          mtimeList[index] = mtime;
+          finishTask(locale === "zh" ? "已读取最近修改" : "Latest update done", folderBasename(root));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          finishTask(locale === "zh" ? "最近修改读取失败" : "Latest update failed", folderBasename(root));
+        });
+    });
 
     return () => {
       cancelled = true;
@@ -510,6 +602,7 @@ export default function ShellPage({ subtitle }: Props) {
     <div className="home-board">
       <header className="home-board-hero">
         <div className="home-board-hero__toolbar">
+          {homeScanBusy && <HomeLiveProgress status={homeLiveStatus} />}
           <PageRefreshButton
             onClick={onRefreshHome}
             disabled={homeScanBusy}

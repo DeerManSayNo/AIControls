@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useId, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import { DetailSheet } from "../components/DetailSheet";
@@ -27,6 +27,13 @@ import {
   gitCheckLocalChanges,
   gitPull,
 } from "../api/codeMetrics";
+import { openProjectPath } from "../api/openProject";
+import { revealPathInFolder } from "../api/reveal";
+import {
+  getOpenAppForProject,
+  setOpenAppForProject,
+  useProjectOpenAppsMap,
+} from "../projectOpenAppStorage";
 
 type ActivityLevel = "high" | "very-high" | "medium" | "low";
 
@@ -38,6 +45,7 @@ function commitsToActivity(count: number): ActivityLevel {
 }
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const BOARD_METRIC_TIMEOUT_MS = 20_000;
 
 interface BoardCache {
   timestamp: number;
@@ -158,15 +166,6 @@ function Dots() {
   return <span aria-hidden>{["", ".", "..", "..."][count]}</span>;
 }
 
-function PullIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width={14} height={14} aria-hidden>
-      <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.21.68-.47v-1.65c-2.77.6-3.35-1.18-3.35-1.18-.46-1.15-1.1-1.46-1.1-1.46-.9-.62.07-.61.07-.61 1 .07 1.52 1.01 1.52 1.01.88 1.49 2.31 1.06 2.88.8.09-.63.35-1.06.63-1.3-2.21-.25-4.54-1.09-4.54-4.85 0-1.07.39-1.94 1.02-2.62-.1-.25-.44-1.27.1-2.64 0 0 .84-.26 2.75 1a9.63 9.63 0 0 1 5.02 0c1.91-1.26 2.75-1 2.75-1 .54 1.37.2 2.39.1 2.64.64.68 1.02 1.55 1.02 2.62 0 3.77-2.33 4.6-4.56 4.85.36.31.67.92.67 1.86v2.75c0 .26.18.57.69.47A10 10 0 0 0 12 2Z"
-        fill="none" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 function useContextMenu() {
   const [anchor, setAnchor] = useState<{ x: number; y: number; path: string } | null>(null);
   const open = (e: React.MouseEvent, path: string) => {
@@ -178,15 +177,40 @@ function useContextMenu() {
   return { anchor, open, close };
 }
 
+async function pickApplicationForProject(projectPath: string): Promise<void> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      multiple: false,
+      title: "选择用于打开该项目的应用程序",
+    });
+    if (selected === null) return;
+    const appPath = Array.isArray(selected) ? selected[0] : selected;
+    if (typeof appPath === "string" && appPath.length > 0) {
+      setOpenAppForProject(projectPath, appPath);
+    }
+  } catch {
+    const manual = window.prompt(
+      "请输入应用程序的完整路径（例如 /Applications/Cursor.app）：",
+    );
+    const trimmed = manual?.trim();
+    if (trimmed) setOpenAppForProject(projectPath, trimmed);
+  }
+}
+
 function CardContextMenu({
   anchor,
   onClose,
+  onOpenDetail,
   onPull,
 }: {
-  anchor: { x: number; y: number };
+  anchor: { x: number; y: number; path: string };
   onClose: () => void;
+  onOpenDetail: () => void;
   onPull: () => void;
 }) {
+  useProjectOpenAppsMap();
+  const customApp = getOpenAppForProject(anchor.path);
   const menuRef = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
@@ -202,6 +226,14 @@ function CardContextMenu({
     };
   }, [onClose]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <ul
       className="card-context-menu"
@@ -212,9 +244,47 @@ function CardContextMenu({
         <button
           type="button"
           className="card-context-menu__item"
-          onClick={() => { onPull(); onClose(); }}
+          onClick={() => {
+            onClose();
+            onOpenDetail();
+          }}
         >
-          <PullIcon />
+          打开卡片详情
+        </button>
+      </li>
+      <li>
+        <button
+          type="button"
+          className="card-context-menu__item"
+          onClick={() => {
+            onClose();
+            void pickApplicationForProject(anchor.path);
+          }}
+        >
+          选择默认打开应用…
+        </button>
+      </li>
+      <li>
+        <button
+          type="button"
+          className="card-context-menu__item"
+          onClick={() => {
+            void revealPathInFolder(anchor.path, { alertOnError: true });
+            onClose();
+          }}
+        >
+          打开所在目录
+        </button>
+      </li>
+      <li>
+        <button
+          type="button"
+          className="card-context-menu__item"
+          onClick={() => {
+            onPull();
+            onClose();
+          }}
+        >
           拉取最新代码
         </button>
       </li>
@@ -223,6 +293,61 @@ function CardContextMenu({
 }
 
 type BoardToastVariant = "error" | "success" | "info";
+
+type BoardLiveStatus = {
+  state: "idle" | "scanning" | "syncing" | "done" | "error";
+  message: string;
+  detail?: string;
+  completed: number;
+  total: number;
+  updatedAt: number | null;
+};
+
+const idleLiveStatus: BoardLiveStatus = {
+  state: "idle",
+  message: "等待刷新",
+  completed: 0,
+  total: 0,
+  updatedAt: null,
+};
+
+function BoardLiveProgress({ status }: { status: BoardLiveStatus }) {
+  const progress =
+    status.total > 0
+      ? Math.min(100, Math.round((status.completed / status.total) * 100))
+      : status.state === "done"
+        ? 100
+        : 0;
+  const updatedAt = status.updatedAt
+    ? new Intl.DateTimeFormat("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(status.updatedAt)
+    : "未开始";
+
+  return (
+    <div
+      className={`board-live-progress board-live-progress--${status.state}`}
+      role="status"
+      aria-live="polite"
+      aria-label={`实时进展：${status.message}`}
+    >
+      <span className="board-live-progress__pulse" aria-hidden />
+      <span className="board-live-progress__body">
+        <strong>{status.message}</strong>
+        {status.detail ? <em>{status.detail}</em> : null}
+      </span>
+      <span className="board-live-progress__meta">
+        {status.total > 0 ? `${status.completed}/${status.total}` : updatedAt}
+      </span>
+      <span className="board-live-progress__bar" aria-hidden>
+        <span style={{ width: `${progress}%` }} />
+      </span>
+    </div>
+  );
+}
 
 function Toast({
   message,
@@ -268,6 +393,66 @@ function messageFromPullOutput(output: string): { message: string; variant: "suc
 }
 
 function MemberAvatars({ count, contributors }: { count: number; contributors?: Contributor[] }) {
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ left: 0, top: 0 });
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current !== null) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const syncMenuPosition = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const maxW = 280;
+    let left = r.left - 8;
+    left = Math.min(left, window.innerWidth - maxW - 8);
+    left = Math.max(8, left);
+    setMenuPos({ left, top: r.bottom + 6 });
+  }, []);
+
+  const openMenu = useCallback(() => {
+    clearHideTimer();
+    syncMenuPosition();
+    setMenuOpen(true);
+  }, [clearHideTimer, syncMenuPosition]);
+
+  const scheduleCloseMenu = useCallback(() => {
+    clearHideTimer();
+    hideTimerRef.current = setTimeout(() => setMenuOpen(false), 100);
+  }, [clearHideTimer]);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    syncMenuPosition();
+  }, [menuOpen, syncMenuPosition]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onScrollOrResize = () => syncMenuPosition();
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [menuOpen, syncMenuPosition]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   if (count === 0 || !contributors || contributors.length === 0) {
     return (
       <div className="project-card__members">
@@ -276,24 +461,52 @@ function MemberAvatars({ count, contributors }: { count: number; contributors?: 
     );
   }
   return (
-    <div className="project-card__members project-card__members--hoverable" tabIndex={0}>
-      <div className="project-card__avatar-stack" aria-hidden>
-        {Array.from({ length: Math.min(count, 3) }, (_, index) => (
-          <span key={index} className={`project-card__avatar project-card__avatar--${index + 1}`} />
-        ))}
-      </div>
-      <span>{count} 位成员</span>
-      <div className="project-card__members-popup">
-        <ul>
-          {contributors.map((c) => (
-            <li key={c.email || c.name}>
-              <strong>{c.name}</strong>
-              {c.commits > 0 && <em>{c.commits} 次提交</em>}
-            </li>
+    <>
+      <div
+        ref={triggerRef}
+        className="project-card__members project-card__members--hoverable"
+        tabIndex={0}
+        aria-expanded={menuOpen}
+        aria-haspopup="true"
+        onMouseEnter={openMenu}
+        onMouseLeave={scheduleCloseMenu}
+        onFocus={openMenu}
+        onBlur={() => {
+          requestAnimationFrame(() => {
+            const ae = document.activeElement;
+            if (triggerRef.current?.contains(ae) || popupRef.current?.contains(ae)) return;
+            setMenuOpen(false);
+          });
+        }}
+      >
+        <div className="project-card__avatar-stack" aria-hidden>
+          {Array.from({ length: Math.min(count, 3) }, (_, index) => (
+            <span key={index} className={`project-card__avatar project-card__avatar--${index + 1}`} />
           ))}
-        </ul>
+        </div>
+        <span>{count} 位成员</span>
       </div>
-    </div>
+      {menuOpen &&
+        createPortal(
+          <div
+            ref={popupRef}
+            className="project-card__members-popup project-card__members-popup--portal"
+            style={{ left: menuPos.left, top: menuPos.top }}
+            onMouseEnter={clearHideTimer}
+            onMouseLeave={scheduleCloseMenu}
+          >
+            <ul>
+              {contributors.map((c) => (
+                <li key={c.email || c.name}>
+                  <strong>{c.name}</strong>
+                  {c.commits > 0 && <em>{c.commits} 次提交</em>}
+                </li>
+              ))}
+            </ul>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -312,11 +525,18 @@ function ProjectCard({
 }) {
   const cfg = stageConfig[project.stage];
   const menu = useContextMenu();
+  const openProjectWithSavedApp = () => {
+    const customApp = getOpenAppForProject(project.path);
+    void openProjectPath(project.path, {
+      applicationPath: customApp ?? null,
+      alertOnError: true,
+    });
+  };
+
   return (
     <>
       <article
         className={`project-card project-card--${project.stage} project-card--clickable`}
-        role="button"
         tabIndex={0}
         onClick={onClick}
         onContextMenu={(e) => menu.open(e, project.path)}
@@ -335,7 +555,17 @@ function ProjectCard({
         )}
       <div className="project-card__head">
         <div>
-          <h3>{project.name}</h3>
+          <button
+            type="button"
+            className="project-card__name-open"
+            title="用默认应用打开项目"
+            onClick={(e) => {
+              e.stopPropagation();
+              openProjectWithSavedApp();
+            }}
+          >
+            <h3>{project.name}</h3>
+          </button>
           <p>{project.description}</p>
         </div>
         <span className={`project-card__badge project-card__badge--${cfg.tone}`}>
@@ -383,6 +613,7 @@ function ProjectCard({
       <CardContextMenu
         anchor={menu.anchor}
         onClose={menu.close}
+        onOpenDetail={onClick}
         onPull={onPull}
       />,
       document.body,
@@ -674,13 +905,23 @@ export default function ProjectBoardPage() {
   const [refreshEpoch, setRefreshEpoch] = useState(0);
   const [boardLoading, setBoardLoading] = useState(false);
   const [pullingPaths, setPullingPaths] = useState<Set<string>>(new Set());
+  const [liveStatus, setLiveStatus] = useState<BoardLiveStatus>(idleLiveStatus);
   const [boardToast, setBoardToast] = useState<{
     message: string;
     variant: BoardToastVariant;
   } | null>(null);
 
   const handlePull = useCallback(async (projectPath: string) => {
+    const projectName = folderBasename(projectPath);
     setPullingPaths((prev) => new Set(prev).add(projectPath));
+    setLiveStatus({
+      state: "syncing",
+      message: "正在检查本地修改",
+      detail: projectName,
+      completed: 0,
+      total: 2,
+      updatedAt: Date.now(),
+    });
     try {
       const status = await gitCheckLocalChanges(projectPath);
       if (status?.has_changes) {
@@ -689,17 +930,49 @@ export default function ProjectBoardPage() {
         );
         if (!ok) {
           setPullingPaths((prev) => { const n = new Set(prev); n.delete(projectPath); return n; });
+          setLiveStatus({
+            state: "idle",
+            message: "已取消拉取",
+            detail: projectName,
+            completed: 0,
+            total: 0,
+            updatedAt: Date.now(),
+          });
           return;
         }
       }
+      setLiveStatus({
+        state: "syncing",
+        message: "正在拉取最新代码",
+        detail: projectName,
+        completed: 1,
+        total: 2,
+        updatedAt: Date.now(),
+      });
       const output = await gitPull(projectPath);
       const { message, variant } = messageFromPullOutput(output);
       setBoardToast({ message, variant });
+      setLiveStatus({
+        state: "done",
+        message,
+        detail: projectName,
+        completed: 2,
+        total: 2,
+        updatedAt: Date.now(),
+      });
       setRefreshEpoch((n) => n + 1);
     } catch (e) {
       setBoardToast({
         message: typeof e === "string" ? e : "拉取失败",
         variant: "error",
+      });
+      setLiveStatus({
+        state: "error",
+        message: "拉取失败",
+        detail: projectName,
+        completed: 0,
+        total: 0,
+        updatedAt: Date.now(),
       });
     } finally {
       setPullingPaths((prev) => { const n = new Set(prev); n.delete(projectPath); return n; });
@@ -719,7 +992,16 @@ export default function ProjectBoardPage() {
   }, [selectedPath]);
 
   useEffect(() => {
-    if (projectPaths.length === 0) return;
+    if (projectPaths.length === 0) {
+      setLiveStatus({
+        state: "idle",
+        message: "暂无项目",
+        completed: 0,
+        total: 0,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
 
     const forced = refreshEpoch > 0;
 
@@ -733,6 +1015,14 @@ export default function ProjectBoardPage() {
       setMembersMap(new Map(boardCache.membersMap));
       setUpdatedMap(new Map(boardCache.updatedMap));
       setBoardLoading(false);
+      setLiveStatus({
+        state: "done",
+        message: "已载入缓存",
+        detail: `${projectPaths.length} 个项目`,
+        completed: projectPaths.length,
+        total: projectPaths.length,
+        updatedAt: boardCache.timestamp,
+      });
       return;
     }
 
@@ -750,7 +1040,35 @@ export default function ProjectBoardPage() {
     const updatedResults = new Map<string, string>();
     const totalPaths = projectPaths.length;
     const mvpPaths = projectPaths.filter((p) => getStageForProject(p) === "mvp");
-    let pending = totalPaths * 6 + mvpPaths.length;
+    const totalTasks = totalPaths * 6 + mvpPaths.length;
+    let pending = totalTasks;
+    let completed = 0;
+    const timeoutIds: number[] = [];
+
+    const updateLiveStatus = (
+      state: BoardLiveStatus["state"],
+      message: string,
+      path?: string,
+    ) => {
+      if (cancelled) return;
+      setLiveStatus({
+        state,
+        message,
+        detail: path ? folderBasename(path) : `${totalPaths} 个项目`,
+        completed,
+        total: totalTasks,
+        updatedAt: Date.now(),
+      });
+    };
+
+    const finishTask = (path: string, label: string) => {
+      completed += 1;
+      pending -= 1;
+      updateLiveStatus("scanning", `已完成${label}`, path);
+      commit();
+    };
+
+    updateLiveStatus("scanning", "准备扫描项目指标");
 
     const commit = () => {
       if (pending === 0 && !cancelled) {
@@ -773,58 +1091,132 @@ export default function ProjectBoardPage() {
         setMembersMap(snapshot.membersMap);
         setUpdatedMap(snapshot.updatedMap);
         setBoardLoading(false);
+        setLiveStatus({
+          state: "done",
+          message: "看板已更新",
+          detail: `${totalPaths} 个项目`,
+          completed: totalTasks,
+          total: totalTasks,
+          updatedAt: snapshot.timestamp,
+        });
       }
     };
 
+    const runMetric = <T,>({
+      path,
+      startMessage,
+      doneLabel,
+      task,
+      onResult,
+      timeoutMs = BOARD_METRIC_TIMEOUT_MS,
+    }: {
+      path: string;
+      startMessage: string;
+      doneLabel: string;
+      task: () => Promise<T>;
+      onResult: (result: T) => void;
+      timeoutMs?: number;
+    }) => {
+      let settled = false;
+      updateLiveStatus("scanning", startMessage, path);
+      const timeoutId = window.setTimeout(() => {
+        if (settled || cancelled) return;
+        settled = true;
+        finishTask(path, `${doneLabel}（超时跳过）`);
+      }, timeoutMs);
+      timeoutIds.push(timeoutId);
+
+      void task()
+        .then((result) => {
+          if (settled || cancelled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          onResult(result);
+          finishTask(path, doneLabel);
+        })
+        .catch(() => {
+          if (settled || cancelled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          finishTask(path, `${doneLabel}（失败跳过）`);
+        });
+    };
+
     for (const path of projectPaths) {
-      void countProjectCodeLines(path).then((result) => {
-        if (cancelled) return;
-        if (result) codeResults.set(path, result);
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在读取代码行数",
+        doneLabel: "代码行数",
+        task: () => countProjectCodeLines(path),
+        onResult: (result) => {
+          if (result) codeResults.set(path, result);
+        },
       });
-      void readPackageVersion(path).then((version) => {
-        if (cancelled) return;
-        if (version) versionResults.set(path, version);
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在读取版本信息",
+        doneLabel: "版本信息",
+        task: () => readPackageVersion(path),
+        onResult: (version) => {
+          if (version) versionResults.set(path, version);
+        },
       });
-      void gitCommitCountLastNDays(path, 30).then((count) => {
-        if (cancelled) return;
-        activityResults.set(path, commitsToActivity(count));
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在统计近 30 天提交",
+        doneLabel: "活跃度",
+        task: () => gitCommitCountLastNDays(path, 30),
+        onResult: (count) => {
+          activityResults.set(path, commitsToActivity(count));
+        },
       });
-      void gitWeeklyCommitCounts(path).then((counts) => {
-        if (cancelled) return;
-        sparklineResults.set(path, counts);
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在生成活跃曲线",
+        doneLabel: "活跃曲线",
+        task: () => gitWeeklyCommitCounts(path),
+        onResult: (counts) => {
+          sparklineResults.set(path, counts);
+        },
       });
-      void gitContributors(path).then((list) => {
-        if (cancelled) return;
-        if (list.length > 0) membersResults.set(path, list);
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在读取成员贡献",
+        doneLabel: "成员贡献",
+        task: () => gitContributors(path),
+        onResult: (list) => {
+          if (list.length > 0) membersResults.set(path, list);
+        },
       });
-      void detectProjectGitInfo(path).then((info) => {
-        if (cancelled) return;
-        if (info?.last_commit_date) updatedResults.set(path, info.last_commit_date);
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在检查最新提交",
+        doneLabel: "最新提交",
+        task: () => detectProjectGitInfo(path),
+        onResult: (info) => {
+          if (info?.last_commit_date) updatedResults.set(path, info.last_commit_date);
+        },
       });
     }
 
     for (const path of mvpPaths) {
-      void estimateProjectProgress(path).then((result) => {
-        if (cancelled) return;
-        if (result) progressResults.set(path, result.progress);
-        pending -= 1;
-        commit();
+      runMetric({
+        path,
+        startMessage: "正在估算 MVP 进度",
+        doneLabel: "MVP 进度",
+        task: () => estimateProjectProgress(path),
+        onResult: (result) => {
+          if (result) progressResults.set(path, result.progress);
+        },
       });
     }
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
+    };
   }, [projectPaths, stagesMap, refreshEpoch]);
 
   const projects = useMemo<BoardProject[]>(() => {
@@ -928,11 +1320,16 @@ export default function ProjectBoardPage() {
           <h1>项目看板</h1>
           <p>全局视角，掌握所有项目的进展与健康状态</p>
         </div>
-        <PageRefreshButton
-          onClick={() => setRefreshEpoch((n) => n + 1)}
-          spinning={boardLoading}
-          label="重新加载项目看板"
-        />
+        <div className="project-board__header-actions">
+          {(liveStatus.state === "scanning" || liveStatus.state === "syncing") && (
+            <BoardLiveProgress status={liveStatus} />
+          )}
+          <PageRefreshButton
+            onClick={() => setRefreshEpoch((n) => n + 1)}
+            spinning={boardLoading}
+            label="重新加载项目看板"
+          />
+        </div>
       </header>
 
       <div className="project-board__actions">
@@ -1015,6 +1412,19 @@ export default function ProjectBoardPage() {
         open={selectedPath !== null}
         title={selectedName ?? ""}
         description={selectedPath ?? ""}
+        meta={
+          selectedPath ? (
+            <button
+              type="button"
+              className="detail-sheet-open-folder"
+              onClick={() => {
+                void revealPathInFolder(selectedPath, { alertOnError: true });
+              }}
+            >
+              打开所在目录
+            </button>
+          ) : null
+        }
         onClose={() => setSelectedPath(null)}
       >
         {gitInfo && <GitInfoBlock git={gitInfo} projectPath={selectedPath!} />}

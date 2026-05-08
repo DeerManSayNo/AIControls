@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 
@@ -18,13 +19,32 @@ export function DetailSheet({
   onClose,
   children,
 }: DetailSheetProps) {
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return createPortal(
-    <div className="detail-sheet-root">
-      <div className="detail-sheet-backdrop" onClick={onClose} aria-hidden />
+    <>
+      <div
+        className="detail-sheet-sidebar-dismiss"
+        onClick={onClose}
+        aria-hidden
+      />
 
-      <div className="detail-sheet-panel">
+      <div className="detail-sheet-root">
+        <div className="detail-sheet-backdrop" onClick={onClose} aria-hidden />
+
+        <div className="detail-sheet-panel">
         <button
           type="button"
           onClick={onClose}
@@ -46,7 +66,8 @@ export function DetailSheet({
           <div className="detail-sheet-children">{children}</div>
         </div>
       </div>
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }

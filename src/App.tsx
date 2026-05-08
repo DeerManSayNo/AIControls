@@ -94,7 +94,11 @@ function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="app-shell">
-      <aside className="side-nav" aria-label={t("nav.main")}>
+      <aside
+        className="side-nav"
+        aria-label={t("nav.main")}
+        onDragStartCapture={(e) => e.preventDefault()}
+      >
         <div className="side-nav__primary">
           <div className="side-nav-brand">
             <div className="side-nav-brand__mark" aria-hidden>
@@ -288,6 +292,15 @@ function ProjectRoute() {
 }
 
 export default function App() {
+  useEffect(() => {
+    const suppressNativeContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", suppressNativeContextMenu, { capture: true });
+    return () =>
+      document.removeEventListener("contextmenu", suppressNativeContextMenu, { capture: true });
+  }, []);
+
   return (
     <Layout>
       <Routes>
