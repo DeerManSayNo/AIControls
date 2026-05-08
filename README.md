@@ -84,6 +84,15 @@ npm run build
 npm run tauri build
 ```
 
+Intel（x86_64）Mac 安装包（在 Apple Silicon 上需先安装 Rust target：`rustup target add x86_64-apple-darwin`）：
+
+```bash
+npm run build
+npm run tauri:build:mac-intel
+```
+
+GitHub Actions：在仓库的 Actions 里手动运行 **Tauri macOS Intel (x86_64)**，可下载构建产物。
+
 ## Scripts
 
 ```bash
@@ -92,6 +101,7 @@ npm run build     # Vite production build
 npm run preview   # Preview built frontend
 npm run test      # Vitest
 npm run tauri     # Tauri CLI
+npm run tauri:build:mac-intel   # Tauri 桌面包（macOS Intel / x86_64）
 ```
 
 ## Notes
