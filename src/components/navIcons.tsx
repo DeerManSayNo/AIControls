@@ -68,7 +68,96 @@ export function NavIconBot(props: IconProps) {
 export function NavIconCursor({ className, ...props }: IconProps) {
   return (
     <svg {...base} {...props} className={className}>
-      <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
+      <path d="M12 3 20.5 8v8L12 21l-8.5-5V8L12 3z" />
+      <path d="M4.75 7.9h14.5L12 20v-8.25L4.75 7.9z" />
+    </svg>
+  );
+}
+
+export function NavIconClaude({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <path d="M12 3.25v5.5" />
+      <path d="M12 15.25v5.5" />
+      <path d="M3.25 12h5.5" />
+      <path d="M15.25 12h5.5" />
+      <path d="m5.8 5.8 3.9 3.9" />
+      <path d="m14.3 14.3 3.9 3.9" />
+      <path d="m18.2 5.8-3.9 3.9" />
+      <path d="m9.7 14.3-3.9 3.9" />
+      <circle cx="12" cy="12" r="1.25" />
+    </svg>
+  );
+}
+
+export function NavIconCodex({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <rect x="4" y="4" width="16" height="16" rx="4" />
+      <path d="m10 9-3 3 3 3" />
+      <path d="M14 15h3" />
+      <path d="M12.75 7.5c2.45.35 4.25 2.2 4.25 4.5" />
+      <path d="M11.25 16.5C8.8 16.15 7 14.3 7 12" />
+    </svg>
+  );
+}
+
+export function NavIconHermes({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <path d="M8 5v14" />
+      <path d="M16 5v14" />
+      <path d="M8 12h8" />
+      <path d="M6.5 8.25 3.5 6.5" />
+      <path d="M6.5 10.75 3 10" />
+      <path d="m17.5 8.25 3-1.75" />
+      <path d="m17.5 10.75 3.5-.75" />
+    </svg>
+  );
+}
+
+export function NavIconOpenClaw({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <path d="M6.25 11.5C6.25 7.9 8.65 5 12 5s5.75 2.9 5.75 6.5c0 4.1-2.85 7.5-5.75 7.5s-5.75-3.4-5.75-7.5z" />
+      <path d="M7.75 5.75 5.5 3.5" />
+      <path d="m16.25 5.75 2.25-2.25" />
+      <path d="M6.2 12.25c-2.35-.55-3.65.65-2.7 2.55.6 1.2 1.75 1.5 3.05.55" />
+      <path d="M17.8 12.25c2.35-.55 3.65.65 2.7 2.55-.6 1.2-1.75 1.5-3.05.55" />
+      <circle cx="9.5" cy="10" r="0.65" fill="currentColor" stroke="none" />
+      <circle cx="14.5" cy="10" r="0.65" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function NavIconTrae({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <path d="M4 5h17v15H7v-3H4V5z" />
+      <path d="M7 17h11V8H7v9z" />
+      <path d="m10 11 2 2-2 2-2-2z" />
+      <path d="m16 11 2 2-2 2-2-2z" />
+    </svg>
+  );
+}
+
+export function NavIconQoder({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <path d="M11.6 3.25 6.9 5.9c-2.45 1.4-3.9 3.9-3.9 6.9v2.7c0 2.05 1 3.65 2.65 4.45l4.1 2" />
+      <path d="m12.4 20.75 4.7-2.65c2.45-1.4 3.9-3.9 3.9-6.9V8.5c0-2.05-1-3.65-2.65-4.45l-4.1-2" />
+      <path d="M14.25 8.35a4.25 4.25 0 1 0 1.9 5.7" />
+      <path d="m15 15 2.75 2.75" />
+    </svg>
+  );
+}
+
+export function NavIconKiro({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <path d="M8.2 17.4c-1.4 2.55.8 4.15 3.2 2.35.85 2.3 3.3.9 4.45-.75 2.6-3.75 1.9-9.35.3-12.05-2.1-3.55-7.35-3.5-9.2.15-.8 1.6-.55 3.65-1.05 5.25-.35 1.2-1.15 2.15-2.05 3.2-.95 1.1-.15 3.1 2.15 2.45.7-.2 1.4-.4 2.2-.6z" />
+      <ellipse cx="10.5" cy="10.5" rx="0.85" ry="1.35" fill="currentColor" stroke="none" />
+      <ellipse cx="14.25" cy="10.5" rx="0.85" ry="1.35" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -137,10 +226,13 @@ export function NavIconSettings(props: IconProps) {
 
 const AGENT_ICONS: Record<string, ComponentType<IconProps>> = {
   cursor: NavIconCursor,
-  claude: NavIconChat,
-  trae: NavIconWorkflow,
-  qoder: NavIconBrackets,
-  kiro: NavIconZap,
+  claude: NavIconClaude,
+  codex: NavIconCodex,
+  hermes: NavIconHermes,
+  openclaw: NavIconOpenClaw,
+  trae: NavIconTrae,
+  qoder: NavIconQoder,
+  kiro: NavIconKiro,
 };
 
 export function NavIconForAgent(agentId: string, props?: IconProps) {

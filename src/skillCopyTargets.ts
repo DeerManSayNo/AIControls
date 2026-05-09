@@ -3,11 +3,23 @@ import {
   pathsReferToSameDir,
 } from "./projectPathsStorage";
 
-const AGENT_ORDER = ["cursor", "claude", "trae", "qoder", "kiro"] as const;
+const AGENT_ORDER = [
+  "cursor",
+  "claude",
+  "codex",
+  "hermes",
+  "openclaw",
+  "trae",
+  "qoder",
+  "kiro",
+] as const;
 
 const AGENT_UI_NAME: Record<string, string> = {
   cursor: "Cursor",
   claude: "Claude Code",
+  codex: "Codex",
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",
@@ -17,6 +29,9 @@ const AGENT_UI_NAME: Record<string, string> = {
 const SKILL_BUCKET_REL: Record<string, readonly string[]> = {
   cursor: [".cursor/skills-cursor", ".cursor/skills"],
   claude: [".claude/skills"],
+  codex: [".codex/skills"],
+  hermes: [".hermes/skills"],
+  openclaw: [".openclaw/skills"],
   trae: [".trae/skills"],
   qoder: [".qoder/skills", ".qoderwork/skills"],
   kiro: [".kiro/skills"],

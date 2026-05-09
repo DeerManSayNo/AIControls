@@ -39,6 +39,9 @@ type Props = {
 const AGENT_LABEL_BY_ID: Record<string, string> = {
   cursor: "Cursor",
   claude: "Claude Code",
+  codex: "Codex",
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",

@@ -556,6 +556,15 @@ fn reclassify_with_categories_system_prompt(categories: &[CustomCategory]) -> St
     )
 }
 
+fn fallback_custom_category_slug(categories: &[CustomCategory]) -> Option<String> {
+    categories
+        .iter()
+        .find(|c| c.label_zh.contains("其他") || c.slug.to_lowercase().contains("other"))
+        .or_else(|| categories.first())
+        .map(|c| c.slug.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+}
+
 /// 让 AI 分析所有资产的 title/description，生成一组新的 2 字中文分类。
 pub async fn regenerate_categories(
     app: &AppHandle,
@@ -732,6 +741,14 @@ pub async fn reclassify_with_new_categories(
                     }
                 }
             }
+        }
+    }
+
+    if let Some(fallback) = fallback_custom_category_slug(&categories) {
+        for e in &all_entries {
+            merged
+                .entry(e.id.clone())
+                .or_insert_with(|| fallback.clone());
         }
     }
 

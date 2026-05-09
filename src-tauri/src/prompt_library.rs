@@ -281,6 +281,9 @@ fn agent_command_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> {
     Ok(match agent_id {
         "cursor" => vec![home.join(".cursor/commands")],
         "claude" => vec![home.join(".claude/commands")],
+        "codex" => vec![home.join(".codex/commands")],
+        "hermes" => vec![home.join(".hermes/commands")],
+        "openclaw" => vec![home.join(".openclaw/commands")],
         "trae" => vec![home.join(".trae/commands")],
         "qoder" => vec![
             home.join(".qoder/commands"),

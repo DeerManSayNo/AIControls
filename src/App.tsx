@@ -303,6 +303,9 @@ function Layout({ children }: { children: ReactNode }) {
 const AGENT_TITLES: Record<string, string> = {
   cursor: "Cursor",
   claude: "Claude Code",
+  codex: "Codex",
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",

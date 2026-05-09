@@ -16,6 +16,15 @@ export function inferAgentIdFromAssetPath(path: string): string | null {
   if (n.includes("/.claude/")) return "claude";
   if (/(?:^|[\\/])claude\.md$/i.test(path)) return "claude";
 
+  if (n.includes("/.codex/")) return "codex";
+  if (/(?:^|[\\/])agents\.md$/i.test(path)) return "codex";
+
+  if (n.includes("/.hermes/")) return "hermes";
+  if (/(?:^|[\\/])hermes\.md$/i.test(path)) return "hermes";
+
+  if (n.includes("/.openclaw/")) return "openclaw";
+  if (/(?:^|[\\/])openclaw\.md$/i.test(path)) return "openclaw";
+
   if (n.includes("/.trae/")) return "trae";
   if (/(?:^|[\\/])trae\.config\.jsonc?$/i.test(path)) return "trae";
 

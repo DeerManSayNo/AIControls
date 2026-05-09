@@ -1,7 +1,7 @@
 //! Scan installed agent apps and read global (non-project) skills, MCP, rules.
 //!
 //! **Rules** follow common 2026 layouts: project rules live under agent-specific dirs
-//! (e.g. `.cursor/rules/*.mdc`, `CLAUDE.md`, `.trae/rules`, `.qoder/rules`, `.kiro/rules`)
+//! (e.g. `.cursor/rules/*.mdc`, `CLAUDE.md`, `AGENTS.md`, `.trae/rules`, `.qoder/rules`, `.kiro/rules`)
 //! plus legacy files (`.cursorrules`, `trae.config.jsonc`, JSON in `.qoder`/`.kiro`).
 //! Global user rules: `~/.cursor/rules`, `~/.claude/rules`, etc., plus legacy JSON(C) where applicable.
 //!
@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 pub struct AgentScanResult {
     pub id: String,
     pub label: String,
+    #[serde(rename = "rootPath")]
+    pub root_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,73 +95,93 @@ fn stable_id(prefix: &str, path: &Path) -> String {
 
 /// macOS: `/Applications/Foo.app`
 #[cfg(target_os = "macos")]
-fn app_bundle_exists(name: &str) -> bool {
-    Path::new("/Applications")
-        .join(format!("{name}.app"))
-        .is_dir()
+fn app_bundle_path(name: &str) -> Option<PathBuf> {
+    let p = Path::new("/Applications").join(format!("{name}.app"));
+    p.is_dir().then_some(p)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn app_bundle_exists(_name: &str) -> bool {
-    false
+fn app_bundle_path(_name: &str) -> Option<PathBuf> {
+    None
+}
+
+fn first_existing_path(paths: Vec<PathBuf>) -> Option<PathBuf> {
+    paths.into_iter().find(|p| p.exists())
+}
+
+fn push_detected_agent(out: &mut Vec<AgentScanResult>, id: &str, label: &str, root: PathBuf) {
+    out.push(AgentScanResult {
+        id: id.into(),
+        label: label.into(),
+        root_path: root.to_string_lossy().into_owned(),
+    });
 }
 
 pub fn detect_agents() -> Vec<AgentScanResult> {
     let home = home_dir();
     let mut out = Vec::new();
 
-    if detect_cursor(&home) {
-        out.push(AgentScanResult {
-            id: "cursor".into(),
-            label: "Cursor".into(),
-        });
+    if let Some(root) = detect_cursor_path(&home) {
+        push_detected_agent(&mut out, "cursor", "Cursor", root);
     }
-    if detect_claude(&home) {
-        out.push(AgentScanResult {
-            id: "claude".into(),
-            label: "Claude Code".into(),
-        });
+    if let Some(root) = detect_claude_path(&home) {
+        push_detected_agent(&mut out, "claude", "Claude Code", root);
     }
-    if detect_trae(&home) {
-        out.push(AgentScanResult {
-            id: "trae".into(),
-            label: "Trae".into(),
-        });
+    if let Some(root) = detect_codex_path(&home) {
+        push_detected_agent(&mut out, "codex", "Codex", root);
     }
-    if detect_qoder(&home) {
-        out.push(AgentScanResult {
-            id: "qoder".into(),
-            label: "Qoder".into(),
-        });
+    if let Some(root) = detect_hermes_path(&home) {
+        push_detected_agent(&mut out, "hermes", "Hermes", root);
     }
-    if detect_kiro(&home) {
-        out.push(AgentScanResult {
-            id: "kiro".into(),
-            label: "Kiro".into(),
-        });
+    if let Some(root) = detect_openclaw_path(&home) {
+        push_detected_agent(&mut out, "openclaw", "OpenClaw", root);
+    }
+    if let Some(root) = detect_trae_path(&home) {
+        push_detected_agent(&mut out, "trae", "Trae", root);
+    }
+    if let Some(root) = detect_qoder_path(&home) {
+        push_detected_agent(&mut out, "qoder", "Qoder", root);
+    }
+    if let Some(root) = detect_kiro_path(&home) {
+        push_detected_agent(&mut out, "kiro", "Kiro", root);
     }
 
     out
 }
 
-fn detect_cursor(home: &Path) -> bool {
-    app_bundle_exists("Cursor") || home.join(".cursor").is_dir()
+fn detect_cursor_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".cursor")]).or_else(|| app_bundle_path("Cursor"))
 }
 
-fn detect_claude(home: &Path) -> bool {
-    home.join(".claude").is_dir()
+fn detect_claude_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".claude")])
 }
 
-fn detect_trae(home: &Path) -> bool {
-    app_bundle_exists("Trae") || app_bundle_exists("Trae CN") || home.join(".trae").is_dir()
+fn detect_codex_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".codex")])
 }
 
-fn detect_qoder(home: &Path) -> bool {
-    app_bundle_exists("Qoder") || home.join(".qoder").is_dir() || home.join(".qoderwork").is_dir()
+fn detect_hermes_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".hermes")]).or_else(|| app_bundle_path("Hermes"))
 }
 
-fn detect_kiro(home: &Path) -> bool {
-    app_bundle_exists("Kiro") || home.join(".kiro").is_dir()
+fn detect_openclaw_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".openclaw")]).or_else(|| app_bundle_path("OpenClaw"))
+}
+
+fn detect_trae_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".trae")])
+        .or_else(|| app_bundle_path("Trae"))
+        .or_else(|| app_bundle_path("Trae CN"))
+}
+
+fn detect_qoder_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".qoder"), home.join(".qoderwork")])
+        .or_else(|| app_bundle_path("Qoder"))
+}
+
+fn detect_kiro_path(home: &Path) -> Option<PathBuf> {
+    first_existing_path(vec![home.join(".kiro")]).or_else(|| app_bundle_path("Kiro"))
 }
 
 fn should_skip_scan_dir(name: &str) -> bool {
@@ -207,6 +229,9 @@ fn collect_project_skill_paths(root: &Path, out: &mut Vec<PathBuf>) {
         ".cursor/skills-cursor",
         ".cursor/skills",
         ".claude/skills",
+        ".codex/skills",
+        ".hermes/skills",
+        ".openclaw/skills",
         ".trae/skills",
         ".qoder/skills",
         ".qoderwork/skills",
@@ -293,6 +318,27 @@ fn collect_project_rule_paths(root: &Path, out: &mut Vec<PathBuf>) {
     let claude_rules = root.join(".claude/rules");
     if claude_rules.is_dir() {
         walk_rules_mdc_md(&claude_rules, 0, 8, out);
+    }
+
+    // Codex — root AGENTS.md + `.codex/rules`
+    push_if_file(root.join("AGENTS.md"), out);
+    let codex_rules = root.join(".codex/rules");
+    if codex_rules.is_dir() {
+        walk_rules_mdc_md(&codex_rules, 0, 8, out);
+    }
+
+    // Hermes — root HERMES.md + `.hermes/rules`
+    push_if_file(root.join("HERMES.md"), out);
+    let hermes_rules = root.join(".hermes/rules");
+    if hermes_rules.is_dir() {
+        walk_rules_mdc_md(&hermes_rules, 0, 8, out);
+    }
+
+    // OpenClaw — root OPENCLAW.md + `.openclaw/rules`
+    push_if_file(root.join("OPENCLAW.md"), out);
+    let openclaw_rules = root.join(".openclaw/rules");
+    if openclaw_rules.is_dir() {
+        walk_rules_mdc_md(&openclaw_rules, 0, 8, out);
     }
 
     // Trae — `.trae/rules` + root `trae.config.{jsonc,json}`
@@ -892,6 +938,105 @@ fn parse_mcp_file(path: &Path, list: &mut Vec<AssetEntry>) {
     }
 }
 
+fn parse_mcp_json_files(paths: &[PathBuf], list: &mut Vec<AssetEntry>) {
+    for p in paths {
+        if p.is_file() {
+            parse_mcp_file(p, list);
+        }
+    }
+}
+
+fn merge_mcp_from_json_files(paths: &[PathBuf], list: &mut Vec<AssetEntry>) {
+    for p in paths {
+        if !p.is_file() {
+            continue;
+        }
+        if let Ok(text) = fs::read_to_string(p) {
+            if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                merge_mcp_from_json_value(&v, list);
+            }
+        }
+    }
+}
+
+fn parse_mcp_toml_files(paths: &[PathBuf], list: &mut Vec<AssetEntry>) {
+    for p in paths {
+        if p.is_file() {
+            parse_mcp_toml_file(p, list);
+        }
+    }
+}
+
+fn toml_value_field_str<'a>(table: &'a toml::Table, key: &str) -> &'a str {
+    table.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+fn parse_toml_mcp_object_at(
+    map: &toml::Table,
+    source_toml: Option<&Path>,
+    list: &mut Vec<AssetEntry>,
+) {
+    for (name, cfg) in map {
+        let desc = match cfg {
+            toml::Value::Table(o) => {
+                let cmd = toml_value_field_str(o, "command");
+                let args = o
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                let url = toml_value_field_str(o, "url");
+                if !url.is_empty() {
+                    format!("url: {url}")
+                } else if !cmd.is_empty() {
+                    format!("{cmd} {args}").trim().to_string()
+                } else {
+                    cfg.to_string()
+                }
+            }
+            _ => cfg.to_string(),
+        };
+        let id_key = match source_toml {
+            Some(p) => format!("{}|{}", p.to_string_lossy(), name),
+            None => name.clone(),
+        };
+        list.push(AssetEntry {
+            id: stable_id("mcp", Path::new(&id_key)),
+            kind: "mcp".into(),
+            title: name.clone(),
+            description: desc,
+            path: source_toml
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("mcp:{name}")),
+            active: true,
+            scenario: None,
+            brief_zh: None,
+            brief_en: None,
+            skill_extra_files: None,
+        });
+    }
+}
+
+fn parse_mcp_toml_file(path: &Path, list: &mut Vec<AssetEntry>) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(v) = toml::from_str::<toml::Value>(&text) else {
+        return;
+    };
+    if let Some(m) = v.get("mcp_servers").and_then(|x| x.as_table()) {
+        parse_toml_mcp_object_at(m, Some(path), list);
+    }
+    if let Some(m) = v.get("mcpServers").and_then(|x| x.as_table()) {
+        parse_toml_mcp_object_at(m, Some(path), list);
+    }
+}
+
 fn merge_mcp_from_json_value(v: &Value, list: &mut Vec<AssetEntry>) {
     merge_mcp_from_json_value_at(v, None, list);
 }
@@ -953,6 +1098,16 @@ pub fn scan_project_directory(root: &Path) -> Result<AgentInventory, String> {
 
     push_skills_from_project_root(&root, &mut skills);
     walk_json_for_mcp(&root, 0, 16, &mut mcp);
+    let codex_project_config = root.join(".codex/config.toml");
+    if codex_project_config.is_file() {
+        parse_mcp_toml_file(&codex_project_config, &mut mcp);
+    }
+    for rel in [".hermes", ".openclaw"] {
+        let agent_root = root.join(rel);
+        parse_mcp_json_files(&[agent_root.join("mcp.json")], &mut mcp);
+        merge_mcp_from_json_files(&[agent_root.join("settings.json")], &mut mcp);
+        parse_mcp_toml_files(&[agent_root.join("config.toml")], &mut mcp);
+    }
     push_rules_from_project_root(&root, &mut rules);
 
     dedupe_mcp(&mut mcp);
@@ -1008,6 +1163,54 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
                 }
             }
             push_rules_from_roots(&[home.join(".claude/rules")], &mut rules);
+        }
+        "codex" => {
+            push_skills_from_roots(&[home.join(".codex/skills")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".codex/commands")], &mut skills);
+            let config = home.join(".codex/config.toml");
+            if config.is_file() {
+                parse_mcp_toml_file(&config, &mut mcp);
+            }
+            let mut codex_paths = Vec::new();
+            push_if_file(home.join(".codex/AGENTS.md"), &mut codex_paths);
+            let codex_rules = home.join(".codex/rules");
+            if codex_rules.is_dir() {
+                walk_rules_mdc_md(&codex_rules, 0, 12, &mut codex_paths);
+            }
+            dedupe_paths(&mut codex_paths);
+            push_rules_from_paths(codex_paths, &mut rules);
+        }
+        "hermes" => {
+            push_skills_from_roots(&[home.join(".hermes/skills")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".hermes/commands")], &mut skills);
+            let hermes_home = home.join(".hermes");
+            parse_mcp_json_files(&[hermes_home.join("mcp.json")], &mut mcp);
+            merge_mcp_from_json_files(&[hermes_home.join("settings.json")], &mut mcp);
+            parse_mcp_toml_files(&[hermes_home.join("config.toml")], &mut mcp);
+            let mut hermes_paths = Vec::new();
+            push_if_file(hermes_home.join("HERMES.md"), &mut hermes_paths);
+            let hermes_rules = hermes_home.join("rules");
+            if hermes_rules.is_dir() {
+                walk_rules_mdc_md(&hermes_rules, 0, 12, &mut hermes_paths);
+            }
+            dedupe_paths(&mut hermes_paths);
+            push_rules_from_paths(hermes_paths, &mut rules);
+        }
+        "openclaw" => {
+            push_skills_from_roots(&[home.join(".openclaw/skills")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".openclaw/commands")], &mut skills);
+            let openclaw_home = home.join(".openclaw");
+            parse_mcp_json_files(&[openclaw_home.join("mcp.json")], &mut mcp);
+            merge_mcp_from_json_files(&[openclaw_home.join("settings.json")], &mut mcp);
+            parse_mcp_toml_files(&[openclaw_home.join("config.toml")], &mut mcp);
+            let mut openclaw_paths = Vec::new();
+            push_if_file(openclaw_home.join("OPENCLAW.md"), &mut openclaw_paths);
+            let openclaw_rules = openclaw_home.join("rules");
+            if openclaw_rules.is_dir() {
+                walk_rules_mdc_md(&openclaw_rules, 0, 12, &mut openclaw_paths);
+            }
+            dedupe_paths(&mut openclaw_paths);
+            push_rules_from_paths(openclaw_paths, &mut rules);
         }
         "trae" => {
             push_skills_from_roots(&[home.join(".trae/skills")], &mut skills);
@@ -1162,6 +1365,12 @@ pub fn read_skill_document(path: &Path) -> Result<(String, String), String> {
             "skill.md",
             "CLAUDE.md",
             "claude.md",
+            "AGENTS.md",
+            "agents.md",
+            "HERMES.md",
+            "hermes.md",
+            "OPENCLAW.md",
+            "openclaw.md",
             "README.md",
             "readme.md",
         ];

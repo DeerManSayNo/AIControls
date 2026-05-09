@@ -19,6 +19,9 @@ pub fn global_skill_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> 
             home.join(".cursor/skills"),
         ],
         "claude" => vec![home.join(".claude/skills")],
+        "codex" => vec![home.join(".codex/skills")],
+        "hermes" => vec![home.join(".hermes/skills")],
+        "openclaw" => vec![home.join(".openclaw/skills")],
         "trae" => vec![home.join(".trae/skills")],
         "qoder" => vec![home.join(".qoder/skills"), home.join(".qoderwork/skills")],
         "kiro" => vec![home.join(".kiro/skills")],
@@ -58,7 +61,9 @@ pub fn list_visible_project_skill_buckets(
         return Err("项目路径不是文件夹".into());
     }
     let mut out = Vec::new();
-    for agent_id in ["cursor", "claude", "trae", "qoder", "kiro"] {
+    for agent_id in [
+        "cursor", "claude", "codex", "hermes", "openclaw", "trae", "qoder", "kiro",
+    ] {
         let buckets = project_skill_parent_dirs(&root, agent_id)?;
         for (idx, bucket_path) in buckets.iter().enumerate() {
             if bucket_agent_marker_exists(&root, bucket_path) {
@@ -86,6 +91,9 @@ pub fn project_skill_parent_dirs(
     let rels: &[&str] = match agent_id {
         "cursor" => &[".cursor/skills-cursor", ".cursor/skills"],
         "claude" => &[".claude/skills"],
+        "codex" => &[".codex/skills"],
+        "hermes" => &[".hermes/skills"],
+        "openclaw" => &[".openclaw/skills"],
         "trae" => &[".trae/skills"],
         "qoder" => &[".qoder/skills", ".qoderwork/skills"],
         "kiro" => &[".kiro/skills"],
@@ -185,7 +193,18 @@ fn copy_tree_merge_contents(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 fn find_primary_skill_doc(dir: &Path) -> Option<PathBuf> {
-    for name in ["SKILL.md", "skill.md", "CLAUDE.md", "claude.md"] {
+    for name in [
+        "SKILL.md",
+        "skill.md",
+        "CLAUDE.md",
+        "claude.md",
+        "AGENTS.md",
+        "agents.md",
+        "HERMES.md",
+        "hermes.md",
+        "OPENCLAW.md",
+        "openclaw.md",
+    ] {
         let p = dir.join(name);
         if p.is_file() {
             return Some(p);

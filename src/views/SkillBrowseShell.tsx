@@ -84,6 +84,7 @@ type BrowseRow = {
   descSource: "ai" | "source";
   kind: BrowseKind;
   ecosystem: string;
+  agentId?: string;
   tags: string[];
   active: boolean;
   /** 本机路径或占位 id */
@@ -108,16 +109,39 @@ type BrowseSection = {
   rows: BrowseRow[];
 };
 
+type AgentFilterOption = {
+  id: string;
+  label: string;
+  count: number;
+};
+
 /** 与 App 侧栏 Agent 名称一致；在「全部」汇总页用于兜底扫描 */
 const AGENT_LABEL_BY_ID: Record<string, string> = {
   cursor: "Cursor",
   claude: "Claude Code",
+  codex: "Codex",
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",
 };
 
-const FALLBACK_AGENT_IDS = ["cursor", "claude", "trae", "qoder", "kiro"] as const;
+const FALLBACK_AGENT_IDS = [
+  "cursor",
+  "claude",
+  "codex",
+  "hermes",
+  "openclaw",
+  "trae",
+  "qoder",
+  "kiro",
+] as const;
+
+function agentLabelForId(id: string, locale: "zh" | "en"): string {
+  if (id === "__other__") return locale === "zh" ? "其他" : "Other";
+  return AGENT_LABEL_BY_ID[id] ?? id;
+}
 
 function folderBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "Project";
@@ -504,6 +528,25 @@ function scenarioCountsFromRows(rows: BrowseRow[]): Record<ScenarioKey, number> 
   return counts;
 }
 
+function agentOptionsFromRows(
+  rows: BrowseRow[],
+  locale: "zh" | "en",
+): AgentFilterOption[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const id = row.agentId ?? row.ecosystem;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([id, count]) => ({
+      id,
+      label: agentLabelForId(id, locale),
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
 function stringSetsEqual(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const x of a) {
@@ -535,6 +578,8 @@ export default function SkillBrowseShell({
   const searchFieldId = useId();
   const browseSectionDomPrefix = useId().replace(/\W/g, "");
   const aggregateLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const aggregateAgentFilterRef = useRef<HTMLDetailsElement | null>(null);
+  const forceClassifyOnRefreshRef = useRef(false);
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [scenario, setScenario] = useState<ScenarioKey>("all");
@@ -596,6 +641,7 @@ export default function SkillBrowseShell({
   const [aggregateAssetsTab, setAggregateAssetsTab] = useState<"all" | "mine">(
     "all",
   );
+  const [aggregateAgentFilter, setAggregateAgentFilter] = useState<string[]>([]);
   /** 单个 Agent 页：Agent 原目录 vs AIControls 我的 Skills */
   const [agentAssetsTab, setAgentAssetsTab] = useState<"all" | "mine">("all");
   const [mySkillsLib, setMySkillsLib] = useState<MySkillsLibraryFile | null>(
@@ -616,6 +662,7 @@ export default function SkillBrowseShell({
   const [savedSnapshotBackup, setSavedSnapshotBackup] = useState<AggregateSnapshot | null>(null);
 
   const onRefreshInventory = useCallback(() => {
+    forceClassifyOnRefreshRef.current = dataSet === "aggregate";
     if (dataSet === "aggregate") {
       invalidateCachedAgentGlobalInventory();
       invalidateCachedProjectInventory();
@@ -628,6 +675,26 @@ export default function SkillBrowseShell({
     }
     setRefreshKey((k) => k + 1);
   }, [dataSet, ecosystem, projectRoot]);
+
+  const toggleAggregateAgentFilter = useCallback((agentId: string) => {
+    setAggregateAgentFilter((prev) =>
+      prev.includes(agentId)
+        ? prev.filter((id) => id !== agentId)
+        : [...prev, agentId],
+    );
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const node = aggregateAgentFilterRef.current;
+      if (!node?.open) return;
+      if (event.target instanceof Node && node.contains(event.target)) return;
+      node.open = false;
+    };
+
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   // ── 重新分类回调 ──
   const handleReclassifyStart = useCallback(async () => {
@@ -737,6 +804,12 @@ export default function SkillBrowseShell({
     if (dataSet !== "aggregate") setAggregateAssetsTab("all");
     if (dataSet !== "skills") setAgentAssetsTab("all");
   }, [dataSet]);
+
+  useEffect(() => {
+    if (!(dataSet === "aggregate" && aggregateAssetsTab === "all")) {
+      setAggregateAgentFilter([]);
+    }
+  }, [dataSet, aggregateAssetsTab]);
 
   // 加载持久化的自定义分类（重新分类确认后保存的）
   useEffect(() => {
@@ -1037,26 +1110,46 @@ export default function SkillBrowseShell({
         !cfg?.apiKeyConfigured ||
         inventoryAssetCount(merged) === 0
       ) {
+        forceClassifyOnRefreshRef.current = false;
         return;
       }
       setAiScenarioBusy(true);
-      const classified = await deepseekClassifyInventory(merged);
+      const shouldForceCustomClassify =
+        forceClassifyOnRefreshRef.current &&
+        !!customCategories &&
+        customCategories.length > 0;
+      const classified = shouldForceCustomClassify
+        ? await deepseekReclassifyWithCategories(merged, customCategories)
+        : await deepseekClassifyInventory(merged);
+      let baseForSummary: AgentInventory | Record<string, string> | null =
+        classified;
       if (!cancelled && classified) {
-        const map = scenarioMapFromInventory(classified);
-        setAggregateSnapshot((prev) =>
-          prev ? patchAggregateSnapshot(prev, map) : prev,
-        );
+        const map =
+          shouldForceCustomClassify
+            ? new Map(Object.entries(classified as Record<string, string>))
+            : scenarioMapFromInventory(classified as AgentInventory);
+        const patched = patchAggregateSnapshot(snapshot, map);
+        setAggregateSnapshot(patched);
+        writeAggregateSnapshotCache(projectPaths, patched, skillsLibrary, promptsLibrary);
       }
+      forceClassifyOnRefreshRef.current = false;
       if (!cancelled) setAiScenarioBusy(false);
 
-      const baseForSummary = classified ?? merged;
+      if (shouldForceCustomClassify) baseForSummary = merged;
+      const summaryInventory =
+        baseForSummary && !("skills" in baseForSummary)
+          ? merged
+          : (baseForSummary as AgentInventory | null) ?? merged;
       setAiBriefBusy(true);
-      const summarized = await deepseekSummarizeInventory(baseForSummary, locale);
+      const summarized = await deepseekSummarizeInventory(summaryInventory, locale);
       if (!cancelled && summarized) {
         const briefMap = briefMapFromInventory(summarized, locale);
-        setAggregateSnapshot((prev) =>
-          prev ? patchAggregateSnapshotBrief(prev, locale, briefMap) : prev,
-        );
+        setAggregateSnapshot((prev) => {
+          if (!prev) return prev;
+          const patched = patchAggregateSnapshotBrief(prev, locale, briefMap);
+          writeAggregateSnapshotCache(projectPaths, patched, skillsLibrary, promptsLibrary);
+          return patched;
+        });
       }
       if (!cancelled) setAiBriefBusy(false);
     };
@@ -1072,7 +1165,7 @@ export default function SkillBrowseShell({
       if (frameId !== null) window.cancelAnimationFrame(frameId);
       if (timerId !== null) window.clearTimeout(timerId);
     };
-  }, [dataSet, projectPaths, refreshKey, locale]);
+  }, [dataSet, projectPaths, refreshKey, locale, customCategories]);
 
   useEffect(() => {
     if (dataSet !== "aggregate") {
@@ -1118,12 +1211,19 @@ export default function SkillBrowseShell({
     };
   }, [dataSet, mySkillsLib, promptLibrary, refreshKey, locale]);
 
-  const { sections, scenarioCounts, customCategoryCounts } = useMemo((): {
+  const { sections, scenarioCounts, customCategoryCounts, agentOptions } = useMemo((): {
     sections: BrowseSection[];
     scenarioCounts: Record<ScenarioKey, number>;
     customCategoryCounts: Record<string, number> | null;
+    agentOptions: AgentFilterOption[];
   } => {
     const empty = zeroScenarioCounts();
+    const emptyResult = {
+      sections: [],
+      scenarioCounts: empty,
+      customCategoryCounts: null,
+      agentOptions: [],
+    };
 
     const applyKindAndQuery = (rows: BrowseRow[]): BrowseRow[] => {
       let r = rows;
@@ -1229,12 +1329,13 @@ export default function SkillBrowseShell({
         sections: [{ key: "mine-grid", title: "", rows: filtered }],
         scenarioCounts,
         customCategoryCounts: customCatCounts,
+        agentOptions: [],
       };
     }
 
     if (dataSet === "skills" && ecosystem && agentAssetsTab === "mine") {
       if (liveLoading && liveInv === undefined) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
       const mineInv: AgentInventory = {
         skills: liveInv?.skills.filter(isCsSkillEntry) ?? [],
@@ -1266,21 +1367,22 @@ export default function SkillBrowseShell({
         sections: [{ key: `mine-${ecosystem}`, title: "", rows: filtered }],
         scenarioCounts,
         customCategoryCounts: customCatCounts,
+        agentOptions: [],
       };
     }
 
     if (dataSet === "project") {
       if (!projectRoot) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
       if (projectLoading && projectInv === undefined) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
       if (projectFailed) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
       if (!projectInv) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
       const buckets = bucketInventoryByAgent(projectInv);
       const out: BrowseSection[] = [];
@@ -1304,13 +1406,14 @@ export default function SkillBrowseShell({
       const filtered = out
         .map((s) => ({ ...s, rows: applyScenarioFilter(s.rows) }))
         .filter((s) => s.rows.length > 0);
-      return { sections: filtered, scenarioCounts, customCategoryCounts: customCatCounts };
+      return { sections: filtered, scenarioCounts, customCategoryCounts: customCatCounts, agentOptions: [] };
     }
 
     if (dataSet === "aggregate") {
       if (aggregateLoading || aggregateSnapshot === null) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
+      const selectedAgentIds = new Set(aggregateAgentFilter);
       let rows: BrowseRow[] = [];
       for (const a of aggregateSnapshot.agents) {
         if (!a.inv) continue;
@@ -1318,6 +1421,7 @@ export default function SkillBrowseShell({
           ...inventoryToRows(a.inv, a.id, a.title, locale).map((r) => ({
             ...r,
             id: `g:${a.id}:${r.id}`,
+            agentId: a.id,
             tags: [a.title, locale === "zh" ? "用户全局" : "Global"],
           })),
         );
@@ -1329,28 +1433,46 @@ export default function SkillBrowseShell({
           ...inventoryToRows(p.inv, "project", bn, locale).map((r) => {
             const aid = inferAgentIdFromAssetPath(r.sourcePath ?? "");
             const agentLbl = aid
-              ? (AGENT_LABEL_BY_ID[aid] ?? aid)
-              : locale === "zh"
-                ? "其他"
-                : "Other";
+              ? agentLabelForId(aid, locale)
+              : agentLabelForId("__other__", locale);
             return {
               ...r,
               id: `p:${p.path}:${r.id}`,
+              agentId: aid ?? "__other__",
               tags: [agentLbl, bn],
             };
           }),
         );
       }
       rows = applyKindAndQuery(rows);
+      const nextAgentOptions = agentOptionsFromRows(rows, locale);
+      const optionIds = new Set(nextAgentOptions.map((option) => option.id));
+      for (const id of selectedAgentIds) {
+        if (!optionIds.has(id)) {
+          nextAgentOptions.push({
+            id,
+            label: agentLabelForId(id, locale),
+            count: 0,
+          });
+        }
+      }
+      if (selectedAgentIds.size > 0) {
+        rows = rows.filter((row) => selectedAgentIds.has(row.agentId ?? row.ecosystem));
+      }
       const scenarioCounts = scenarioCountsFromRows(rows);
       const customCatCounts = computeCustomCategoryCounts(rows);
       rows = applyScenarioFilter(rows);
-      return { sections: [{ key: "aggregate", title: "", rows }], scenarioCounts, customCategoryCounts: customCatCounts };
+      return {
+        sections: [{ key: "aggregate", title: "", rows }],
+        scenarioCounts,
+        customCategoryCounts: customCatCounts,
+        agentOptions: nextAgentOptions,
+      };
     }
 
     if (ecosystem && dataSet === "skills") {
       if (liveLoading && liveInv === undefined) {
-        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+        return emptyResult;
       }
 
       const globalKey = `global:${ecosystem}`;
@@ -1402,10 +1524,11 @@ export default function SkillBrowseShell({
         sections: [globalSectionFiltered, ...projectSectionsNonEmpty],
         scenarioCounts,
         customCategoryCounts: customCatCounts,
+        agentOptions: [],
       };
     }
 
-    return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+    return emptyResult;
   }, [
     dataSet,
     ecosystem,
@@ -1424,6 +1547,7 @@ export default function SkillBrowseShell({
     agentProjectScans,
     locale,
     aggregateAssetsTab,
+    aggregateAgentFilter,
     agentAssetsTab,
     aggregateMineKind,
     mySkillsLib,
@@ -1434,6 +1558,19 @@ export default function SkillBrowseShell({
     customCategories,
     customScenario,
   ]);
+
+  const aggregateAgentFilterLabel = useMemo(() => {
+    if (aggregateAgentFilter.length === 0) {
+      return locale === "zh" ? "Agent 筛选" : "Agent filter";
+    }
+    if (aggregateAgentFilter.length === 1) {
+      const selected = agentOptions.find((option) => option.id === aggregateAgentFilter[0]);
+      return selected?.label ?? (locale === "zh" ? "已选 1 个 Agent" : "1 agent selected");
+    }
+    return locale === "zh"
+      ? `已选 ${aggregateAgentFilter.length} 个 Agent`
+      : `${aggregateAgentFilter.length} agents selected`;
+  }, [agentOptions, aggregateAgentFilter, locale]);
 
   const listedTotal = sections.reduce((n, s) => n + s.rows.length, 0);
 
@@ -1460,6 +1597,7 @@ export default function SkillBrowseShell({
   }, [
     dataSet,
     aggregateAssetsTab,
+    aggregateAgentFilter,
     aggregateMineKind,
     filter,
     scenario,
@@ -1892,6 +2030,69 @@ export default function SkillBrowseShell({
                 autoComplete="off"
               />
             </label>
+            {dataSet === "aggregate" && aggregateAssetsTab === "all" ? (
+              <details ref={aggregateAgentFilterRef} className="agent-filter">
+                <summary
+                  className={`agent-filter__button${
+                    aggregateAgentFilter.length > 0 ? " active" : ""
+                  }${agentOptions.length === 0 ? " disabled" : ""}`}
+                  aria-disabled={agentOptions.length === 0}
+                  onClick={(event) => {
+                    if (agentOptions.length === 0) event.preventDefault();
+                  }}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M3 5h18" />
+                    <path d="M7 12h10" />
+                    <path d="M10 19h4" />
+                  </svg>
+                  <span>{aggregateAgentFilterLabel}</span>
+                  {aggregateAgentFilter.length > 0 ? (
+                    <span className="agent-filter__badge">{aggregateAgentFilter.length}</span>
+                  ) : null}
+                </summary>
+                <div className="agent-filter__menu" role="group" aria-label={locale === "zh" ? "Agent 多选筛选" : "Agent multi-select filter"}>
+                  <div className="agent-filter__menu-head">
+                    <span>{locale === "zh" ? "选择 Agent" : "Select agents"}</span>
+                    {aggregateAgentFilter.length > 0 ? (
+                      <button
+                        type="button"
+                        className="agent-filter__clear"
+                        onClick={() => setAggregateAgentFilter([])}
+                      >
+                        {locale === "zh" ? "清空" : "Clear"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="agent-filter__options">
+                    {agentOptions.map((option) => {
+                      const checked = aggregateAgentFilter.includes(option.id);
+                      return (
+                        <label key={option.id} className="agent-filter__option">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleAggregateAgentFilter(option.id)}
+                          />
+                          <span className="agent-filter__option-label">{option.label}</span>
+                          <span className="agent-filter__option-count">{option.count}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </details>
+            ) : null}
             {dataSet === "aggregate" && aggregateAssetsTab === "mine" ? (
               <div
                 className="seg"

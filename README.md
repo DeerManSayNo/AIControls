@@ -42,7 +42,7 @@ AIControls 不是单一的 Agent 管理器，而是围绕 vibecoding 工作流�
 
 - **Project management hub**: 汇总本机项目和最近工作区，让你快速回到当前正在 vibecoding 的项目现场。
 - **AI asset management**: 统一管理与项目配套的 Skills、MCP、Rules、Prompt、资源链接、说明文档和素材。
-- **Agent environment inventory**: 自动发现 Cursor、Claude Code、Trae、Qoder、Kiro，并汇总全局与项目级配置。
+- **Agent environment inventory**: 自动发现 Cursor、Claude Code、Codex、Hermes、OpenClaw、Trae、Qoder、Kiro，并汇总全局与项目级配置。
 - **Skill workflow**: 从本地或 GitHub 仓库导入 Skill，并复制到全局或项目 Agent 目录，支持冲突处理与目标检测。
 - **Prompt library**: 管理图片、代码、文档、纯文本 Prompt，支持分组、搜索、示例输出和图片示例。
 - **Resource library**: 保存链接、标签和笔记，粘贴一段文本也能提取首个 URL，方便沉淀项目上下文。
@@ -58,7 +58,7 @@ vibecoding 会让开发速度变快，但也会带来新的混乱：一个项目
 
 ## Supported Agents
 
-Cursor · Claude Code · Trae · Qoder · Kiro
+Cursor · Claude Code · Codex · Hermes · OpenClaw · Trae · Qoder · Kiro
 
 ## Tech Stack
 

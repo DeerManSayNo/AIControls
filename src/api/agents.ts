@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type AgentScanResult = { id: string; label: string };
+export type AgentScanResult = {
+  id: string;
+  label: string;
+  rootPath?: string;
+};
 
 export type AssetEntry = {
   id: string;
@@ -25,7 +29,15 @@ export type AgentInventory = {
   rules: AssetEntry[];
 };
 
-export type AgentId = "cursor" | "claude" | "trae" | "qoder" | "kiro";
+export type AgentId =
+  | "cursor"
+  | "claude"
+  | "codex"
+  | "hermes"
+  | "openclaw"
+  | "trae"
+  | "qoder"
+  | "kiro";
 
 export async function listDetectedAgents(): Promise<AgentScanResult[] | null> {
   try {
