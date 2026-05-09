@@ -352,8 +352,57 @@ fn setup_tray(app: &mut tauri::App, is_quitting: Arc<AtomicBool>) -> tauri::Resu
 }
 
 #[tauri::command]
-fn list_detected_agents() -> Vec<scan::AgentScanResult> {
-    scan::detect_agents()
+fn list_detected_agents(app: AppHandle) -> Vec<scan::AgentScanResult> {
+    let hidden = storage::load_hidden_sidebar_agent_ids(&app).unwrap_or_default();
+    let mut out: Vec<scan::AgentScanResult> = scan::detect_agents()
+        .into_iter()
+        .filter(|a| !hidden.contains(&a.id))
+        .collect();
+    if let Ok(user_agents) = storage::load_user_agents(&app) {
+        let builtin_canon: std::collections::HashSet<String> = out
+            .iter()
+            .filter_map(|a| std::path::Path::new(&a.root_path).canonicalize().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        for ua in user_agents {
+            if let Ok(can) = std::path::Path::new(&ua.path).canonicalize() {
+                let s = can.to_string_lossy().into_owned();
+                if builtin_canon.contains(&s) {
+                    continue;
+                }
+            }
+            out.push(scan::AgentScanResult {
+                id: ua.id,
+                label: ua.label,
+                root_path: ua.path,
+            });
+        }
+    }
+    out
+}
+
+#[tauri::command]
+fn add_user_agent_from_path(app: AppHandle, path: String) -> Result<scan::AgentScanResult, String> {
+    let ua = storage::add_user_agent_from_path(&app, &path)?;
+    Ok(scan::AgentScanResult {
+        id: ua.id,
+        label: ua.label,
+        root_path: ua.path,
+    })
+}
+
+#[tauri::command]
+fn remove_agent_from_sidebar(app: AppHandle, agent_id: String) -> Result<(), String> {
+    if agent_id.starts_with("useragent-") {
+        storage::remove_user_agent(&app, &agent_id)
+    } else {
+        storage::hide_sidebar_builtin_agent(&app, &agent_id)
+    }
+}
+
+#[tauri::command]
+fn clear_hidden_sidebar_agents(app: AppHandle) -> Result<(), String> {
+    storage::clear_hidden_sidebar_agents(&app)
 }
 
 #[tauri::command]
@@ -362,7 +411,11 @@ async fn get_agent_global_inventory(
     agent_id: String,
 ) -> Result<AgentInventory, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut inv = scan::global_inventory(&agent_id)?;
+        let mut inv = if let Ok(Some(root)) = storage::user_agent_root_for_id(&app, &agent_id) {
+            scan::global_inventory_at_agent_root(&root)?
+        } else {
+            scan::global_inventory(&agent_id)?
+        };
         let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
         scan::attach_scenarios(&mut inv, &scenario_map);
         let brief_map_zh = storage::load_brief_map(&app, "zh").unwrap_or_default();
@@ -452,8 +505,18 @@ async fn deepseek_enrich_resource_url(
 async fn deepseek_regenerate_categories(
     app: AppHandle,
     inventory: AgentInventory,
+    locale: Option<String>,
 ) -> Result<Vec<deepseek::CustomCategory>, String> {
-    deepseek::regenerate_categories(&app, inventory).await
+    deepseek::regenerate_categories(&app, inventory, locale).await
+}
+
+#[tauri::command]
+async fn deepseek_translate_custom_categories(
+    app: AppHandle,
+    categories: Vec<deepseek::CustomCategory>,
+    locale: Option<String>,
+) -> Result<Vec<deepseek::CustomCategory>, String> {
+    deepseek::translate_custom_categories(&app, categories, locale).await
 }
 
 #[tauri::command]
@@ -1067,6 +1130,7 @@ fn list_visible_project_skill_buckets(
 /// 参数与前端 `invoke` 顶层 camelCase 字段一一对应（勿再用单字段 struct，否则需包一层 `{ args: {...} }`）。
 #[tauri::command]
 fn copy_skill_package(
+    app: AppHandle,
     source_path: String,
     dest_kind: String,
     agent_id: String,
@@ -1080,6 +1144,7 @@ fn copy_skill_package(
         _ => true,
     };
     skill_copy::perform_copy_with_options(
+        Some(&app),
         &source_path,
         &dest_kind,
         &agent_id,
@@ -1164,12 +1229,13 @@ fn convert_prompt_to_my_skill(
 
 #[tauri::command]
 fn apply_prompt_command_to_agent(
+    app: AppHandle,
     agent_id: String,
     title: String,
     prompt: String,
     command_name: String,
 ) -> Result<String, String> {
-    prompt_library::apply_prompt_command_to_agent(&agent_id, &title, &prompt, &command_name)
+    prompt_library::apply_prompt_command_to_agent(&app, &agent_id, &title, &prompt, &command_name)
 }
 
 #[tauri::command]
@@ -1289,6 +1355,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_detected_agents,
+            add_user_agent_from_path,
+            remove_agent_from_sidebar,
+            clear_hidden_sidebar_agents,
             get_agent_global_inventory,
             scan_project_directory,
             read_skill_document,
@@ -1300,6 +1369,7 @@ pub fn run() {
             deepseek_resummarize_asset,
             deepseek_enrich_resource_url,
             deepseek_regenerate_categories,
+            deepseek_translate_custom_categories,
             deepseek_reclassify_with_new_categories,
             get_custom_categories,
             clear_custom_categories,

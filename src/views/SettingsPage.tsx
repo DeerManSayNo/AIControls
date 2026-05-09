@@ -14,6 +14,7 @@ import {
   giteeDisconnect,
   giteeRestoreFromRepoUrl,
 } from "../api/gitee";
+import { clearHiddenSidebarAgents } from "../api/agents";
 
 function InfoTooltip({ label, content }: { label: string; content: string }) {
   return (
@@ -47,6 +48,7 @@ export default function SettingsPage() {
     ReturnType<typeof getGiteeSettings>
   > | null>(null);
   const [giteeHint, setGiteeHint] = useState<string | null>(null);
+  const [sidebarAgentsHint, setSidebarAgentsHint] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,38 +167,75 @@ export default function SettingsPage() {
       </div>
 
       <section style={{ marginTop: "1.25rem" }}>
+        <div className="settings-language-row">
+          <div className="settings-block-head">
+            <h3 className="settings-block-title">{t("settings.lang")}</h3>
+          </div>
+          <div className="seg" role="tablist" aria-label={t("settings.lang")}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={preference === "system"}
+              className={`seg__item${preference === "system" ? " active" : ""}`}
+              onClick={() => setPreference("system")}
+            >
+              {t("settings.lang.follow")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={preference === "zh"}
+              className={`seg__item${preference === "zh" ? " active" : ""}`}
+              onClick={() => setPreference("zh")}
+            >
+              {t("settings.lang.zh")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={preference === "en"}
+              className={`seg__item${preference === "en" ? " active" : ""}`}
+              onClick={() => setPreference("en")}
+            >
+              {t("settings.lang.en")}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section style={{ marginTop: "1.25rem" }}>
         <div className="settings-block-head">
-          <h3 className="settings-block-title">{t("settings.lang")}</h3>
+          <h3 className="settings-block-title">{t("settings.sidebarAgents")}</h3>
         </div>
-        <div className="seg" role="tablist" aria-label={t("settings.lang")}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={preference === "system"}
-            className={`seg__item${preference === "system" ? " active" : ""}`}
-            onClick={() => setPreference("system")}
-          >
-            {t("settings.lang.follow")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={preference === "zh"}
-            className={`seg__item${preference === "zh" ? " active" : ""}`}
-            onClick={() => setPreference("zh")}
-          >
-            {t("settings.lang.zh")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={preference === "en"}
-            className={`seg__item${preference === "en" ? " active" : ""}`}
-            onClick={() => setPreference("en")}
-          >
-            {t("settings.lang.en")}
-          </button>
-        </div>
+        <p className="muted" style={{ margin: "0 0 0.75rem", fontSize: "0.85rem" }}>
+          {t("settings.restoreHiddenAgentsHint")}
+        </p>
+        <button
+          type="button"
+          className="btn-icon"
+          disabled={busy}
+          onClick={async () => {
+            setSidebarAgentsHint(null);
+            setBusy(true);
+            const r = await clearHiddenSidebarAgents();
+            setBusy(false);
+            if ("error" in r) {
+              setSidebarAgentsHint(r.error);
+              return;
+            }
+            setSidebarAgentsHint(
+              locale === "zh" ? "已恢复内置 Agent 侧栏列表。" : "Built-in agents restored in the sidebar.",
+            );
+            window.dispatchEvent(new Event("aicontrols-agents-changed"));
+          }}
+        >
+          {t("settings.restoreHiddenAgents")}
+        </button>
+        {sidebarAgentsHint ? (
+          <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
+            {sidebarAgentsHint}
+          </p>
+        ) : null}
       </section>
 
       <section style={{ marginTop: "1.25rem" }}>

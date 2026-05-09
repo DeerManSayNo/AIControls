@@ -47,6 +47,41 @@ export async function listDetectedAgents(): Promise<AgentScanResult[] | null> {
   }
 }
 
+/** 将本地以 `.` 开头的配置目录（如 `~/.myagent`）加入侧栏 Agent 列表。 */
+export async function addUserAgentFromPath(
+  path: string,
+): Promise<AgentScanResult | { error: string }> {
+  try {
+    return await invoke<AgentScanResult>("add_user_agent_from_path", { path });
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+/** 从侧栏移除：自定义 Agent 删除记录；内置 Agent 仅写入隐藏列表。 */
+export async function removeAgentFromSidebar(
+  agentId: string,
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    await invoke<void>("remove_agent_from_sidebar", { agentId });
+    return { ok: true };
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+/** 取消所有已隐藏的内置 Agent，侧栏恢复为自动检测的完整列表。 */
+export async function clearHiddenSidebarAgents(): Promise<
+  { ok: true } | { error: string }
+> {
+  try {
+    await invoke<void>("clear_hidden_sidebar_agents");
+    return { ok: true };
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
 export async function getAgentGlobalInventory(
   agentId: string,
 ): Promise<AgentInventory | null> {

@@ -28,13 +28,15 @@ fn finalize_github_import_dest(
         )?;
         Ok(entry.path)
     } else {
-        skill_copy::perform_copy(
+        skill_copy::perform_copy_with_options(
+            Some(app),
             source_dir.to_string_lossy().as_ref(),
             dest_kind,
             agent_id,
             bucket_index,
             project_root,
             on_conflict_suffix,
+            None,
         )
     }
 }

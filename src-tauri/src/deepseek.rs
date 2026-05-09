@@ -525,25 +525,43 @@ pub async fn enrich_resource_from_url(
 pub struct CustomCategory {
     pub slug: String,
     pub label_zh: String,
+    #[serde(default)]
+    pub label_en: Option<String>,
 }
 
-fn regenerate_categories_system_prompt() -> String {
-    r#"你是 AIControls 的分类生成助手。输入是用户所有 Skill / MCP / Rule 的标题与描述信息。
+fn regenerate_categories_system_prompt(locale: &str) -> String {
+    let preferred = if locale == "en" {
+        "当前界面语言是英文；英文标签 labelEn 要自然、简短、适合 UI chip 展示（1-3 个英文单词，Title Case）。"
+    } else {
+        "当前界面语言是中文；中文标签 labelZh 要自然、简短、适合 UI chip 展示。"
+    };
+    format!(
+        r#"你是 AIControls 的分类生成助手。输入是用户所有 Skill / MCP / Rule 的标题与描述信息。
 请分析这些资产，总结出 5 到 8 个分类。严格要求：
 1) 每个分类的中文名必须是 **恰好 2 个中文字**，例如"开发""设计""运维"；
-2) 每个分类同时提供一个英文 slug（小写、用下划线连接，如 dev_tools）；
-3) 分类之间互斥、覆盖尽可能全面；
-4) 不用解释，直接输出 JSON。
+2) 每个分类必须同时提供英文标签 labelEn（1-3 个英文单词，Title Case，例如 "Dev Tools"）；
+3) 每个分类同时提供一个英文 slug（小写、用下划线连接，如 dev_tools）；
+4) 分类之间互斥、覆盖尽可能全面；
+5) 不用解释，直接输出 JSON。
+{}
 
-只输出一个 JSON 数组，每个元素是 { "slug": "xxx", "labelZh": "XX" }。
-不要 Markdown，不要多余字段。"#
-        .to_string()
+只输出一个 JSON 数组，每个元素是 {{ "slug": "xxx", "labelZh": "XX", "labelEn": "English" }}。
+不要 Markdown，不要多余字段。"#,
+        preferred
+    )
 }
 
 fn reclassify_with_categories_system_prompt(categories: &[CustomCategory]) -> String {
     let cat_lines: Vec<String> = categories
         .iter()
-        .map(|c| format!("{} — {}", c.slug, c.label_zh))
+        .map(|c| {
+            let en = c.label_en.as_deref().unwrap_or("").trim();
+            if en.is_empty() {
+                format!("{} — {}", c.slug, c.label_zh)
+            } else {
+                format!("{} — {} / {}", c.slug, c.label_zh, en)
+            }
+        })
         .collect();
     format!(
         r#"你是 AIControls 的资产分类助手。输入是多条 Skill / MCP / Rule 的简要信息。
@@ -569,6 +587,7 @@ fn fallback_custom_category_slug(categories: &[CustomCategory]) -> Option<String
 pub async fn regenerate_categories(
     app: &AppHandle,
     inventory: AgentInventory,
+    locale: Option<String>,
 ) -> Result<Vec<CustomCategory>, String> {
     let api_key = storage::load_deepseek_api_key(app)?
         .filter(|k| !k.is_empty())
@@ -600,7 +619,7 @@ pub async fn regenerate_categories(
 
     let raw = chat_completion(
         &api_key,
-        &regenerate_categories_system_prompt(),
+        &regenerate_categories_system_prompt(locale.as_deref().unwrap_or("zh")),
         &user,
         true,
         600,
@@ -626,6 +645,12 @@ pub async fn regenerate_categories(
             .unwrap_or("")
             .trim()
             .to_string();
+        let label_en = item
+            .get("labelEn")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
         if slug.is_empty() || label_zh.is_empty() {
             continue;
         }
@@ -637,7 +662,7 @@ pub async fn regenerate_categories(
         if cjk_count == 0 {
             continue;
         }
-        categories.push(CustomCategory { slug, label_zh });
+        categories.push(CustomCategory { slug, label_zh, label_en });
     }
 
     if categories.is_empty() {
@@ -645,6 +670,49 @@ pub async fn regenerate_categories(
     }
 
     Ok(categories)
+}
+
+/// Fill translated labels for persisted custom categories when the UI switches language.
+pub async fn translate_custom_categories(
+    app: &AppHandle,
+    categories: Vec<CustomCategory>,
+    locale: Option<String>,
+) -> Result<Vec<CustomCategory>, String> {
+    let target = locale.unwrap_or_else(|| "en".to_string());
+    if target != "en" {
+        return Ok(categories);
+    }
+    if categories.iter().all(|c| c.label_en.as_deref().unwrap_or("").trim().len() > 0) {
+        return Ok(categories);
+    }
+    let api_key = storage::load_deepseek_api_key(app)?
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let input = serde_json::to_string(&categories).map_err(|e| e.to_string())?;
+    let system = r#"You translate AIControls category labels for UI chips.
+Input is a JSON array with slug and labelZh. Return the same array order with slug and labelEn.
+labelEn must be natural English, 1-3 words, Title Case. Do not change slug. Output JSON only."#;
+    let raw = chat_completion(&api_key, system, &input, true, 500).await?;
+    let v = extract_json_object(&raw)?;
+    let arr = v.as_array().ok_or_else(|| "模型返回的不是 JSON 数组".to_string())?;
+    let mut en_by_slug: HashMap<String, String> = HashMap::new();
+    for item in arr {
+        let slug = item.get("slug").and_then(|x| x.as_str()).unwrap_or("").trim();
+        let label_en = item.get("labelEn").and_then(|x| x.as_str()).unwrap_or("").trim();
+        if !slug.is_empty() && !label_en.is_empty() {
+            en_by_slug.insert(slug.to_string(), label_en.to_string());
+        }
+    }
+    let mut out = categories;
+    for c in &mut out {
+        if c.label_en.as_deref().unwrap_or("").trim().is_empty() {
+            if let Some(en) = en_by_slug.get(&c.slug) {
+                c.label_en = Some(en.clone());
+            }
+        }
+    }
+    storage::save_custom_categories(app, &out)?;
+    Ok(out)
 }
 
 /// 使用自定义分类列表重新归类所有资产，返回 id → newSlug 映射；同时持久化到本地缓存。

@@ -178,6 +178,12 @@ export default function ShellPage({ subtitle }: Props) {
   }, [homeRefreshKey]);
 
   useEffect(() => {
+    const bump = () => setHomeRefreshKey((k) => k + 1);
+    window.addEventListener("aicontrols-agents-changed", bump);
+    return () => window.removeEventListener("aicontrols-agents-changed", bump);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     const agentIds = detectedAgents.map((a) => a.id);
     const scanRoots = [...projectPaths];
@@ -486,6 +492,11 @@ export default function ShellPage({ subtitle }: Props) {
     })();
   };
 
+  const userCustomAgentIds = useMemo(
+    () => detectedAgents.filter((a) => a.id.startsWith("useragent-")).map((a) => a.id),
+    [detectedAgents],
+  );
+
   const homeImportMenuSections = useMemo(
     () =>
       buildCopySkillMenuSections({
@@ -494,10 +505,11 @@ export default function ShellPage({ subtitle }: Props) {
         projectRoot: undefined,
         ecosystem: undefined,
         agentProjectScanPaths: [],
+        userCustomAgentIds,
         copyVerb: "导入",
         includeMyLibrary: true,
       }),
-    [projectPaths],
+    [projectPaths, userCustomAgentIds],
   );
 
   const closeGithubSkillPickModal = () => setGithubSkillPickModal(null);
@@ -616,7 +628,7 @@ export default function ShellPage({ subtitle }: Props) {
         </div>
         <div className="home-board-hero__content">
           <h1 className="home-board-hello">
-            {locale === "zh" ? "下午好，Controler" : "Good afternoon, Controller"} <span aria-hidden>👋</span>
+            {locale === "zh" ? "下午好，Controller" : "Good afternoon, Controller"} <span aria-hidden>👋</span>
           </h1>
           <p className="home-board-lead">
             {subtitle ??

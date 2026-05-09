@@ -224,19 +224,9 @@ fn validate_and_normalize(mut lib: PromptLibraryFile) -> Result<PromptLibraryFil
             return Err(format!("条目 {} 图片数据格式非法", item.id));
         }
         if item.output_type == "image" {
-            let has_image = item
-                .image_data_url
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty());
-            if !has_image {
-                return Err(format!("条目 {} 缺少图片输出示例", item.id));
-            }
             item.output_example.clear();
         } else {
             item.image_data_url = None;
-            if item.output_example.is_empty() {
-                return Err(format!("条目 {} 缺少输出示例", item.id));
-            }
         }
         if item.id.trim().is_empty() {
             return Err("存在条目 id 为空".into());
@@ -362,6 +352,7 @@ fn write_prompt_command_file(
 }
 
 pub fn apply_prompt_command_to_agent(
+    app: &AppHandle,
     agent_id: &str,
     title: &str,
     prompt: &str,
@@ -370,7 +361,13 @@ pub fn apply_prompt_command_to_agent(
     if prompt.trim().is_empty() {
         return Err("Prompt 不能为空".into());
     }
-    let parent = pick_agent_command_parent(agent_id)?;
+    let parent = if let Ok(Some(root)) = crate::storage::user_agent_root_for_id(app, agent_id) {
+        let p = root.join("commands");
+        fs::create_dir_all(&p).map_err(|e| format!("创建命令目录失败：{e}"))?;
+        p
+    } else {
+        pick_agent_command_parent(agent_id)?
+    };
     let path = write_prompt_command_file(&parent, title, prompt, command_name)?;
     Ok(path.to_string_lossy().into_owned())
 }

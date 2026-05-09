@@ -23,12 +23,18 @@ export const zhMessages: Messages = {
   "nav.noAgents": "未发现已安装的 Agent",
   "nav.addProject": "添加项目",
   "nav.addProjectTitle": "选择本地文件夹并扫描其中配置",
+  "nav.addAgent": "添加 Agent",
+  "nav.addAgentTitle": "选择以 . 开头的配置目录（如 ~/.myagent）",
   "settings.title": "设置",
   "settings.reload": "重新读取设置",
   "settings.lang": "界面语言",
   "settings.lang.follow": "跟随系统",
   "settings.lang.zh": "中文",
   "settings.lang.en": "English",
+  "settings.sidebarAgents": "侧栏 Agent",
+  "settings.restoreHiddenAgents": "恢复已隐藏的内置 Agent",
+  "settings.restoreHiddenAgentsHint":
+    "从侧栏移除的内置 Agent 会写入本机列表；点此恢复为自动检测的完整列表（不影响自定义 Agent）。",
 };
 
 export const enMessages: Messages = {
@@ -52,12 +58,18 @@ export const enMessages: Messages = {
   "nav.noAgents": "No installed agents found",
   "nav.addProject": "Add Project",
   "nav.addProjectTitle": "Pick a local folder and scan configs",
+  "nav.addAgent": "Add Agent",
+  "nav.addAgentTitle": "Pick a dot-folder (e.g. ~/.myagent)",
   "settings.title": "Settings",
   "settings.reload": "Reload settings",
   "settings.lang": "Interface Language",
   "settings.lang.follow": "Follow system",
   "settings.lang.zh": "Chinese",
   "settings.lang.en": "English",
+  "settings.sidebarAgents": "Sidebar agents",
+  "settings.restoreHiddenAgents": "Restore hidden built-in agents",
+  "settings.restoreHiddenAgentsHint":
+    "Built-in agents removed from the sidebar are stored locally; use this to show the full auto-detected list again (custom agents are unchanged).",
 };
 
 export const allMessages: Record<Locale, Messages> = {

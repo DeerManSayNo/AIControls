@@ -34,6 +34,7 @@ import {
   setOpenAppForProject,
   useProjectOpenAppsMap,
 } from "../projectOpenAppStorage";
+import { useI18n } from "../i18n/provider";
 
 type ActivityLevel = "high" | "very-high" | "medium" | "low";
 
@@ -81,40 +82,51 @@ type BoardProject = {
 const stageConfig: Record<
   StageKey,
   {
-    title: string;
-    badge: string;
+    title: { zh: string; en: string };
+    badge: { zh: string; en: string };
     tone: "purple" | "green" | "blue";
   }
 > = {
   mvp: {
-    title: "MVP 阶段（未上线）",
-    badge: "MVP",
+    title: { zh: "MVP 阶段（未上线）", en: "MVP Stage (Not Live)" },
+    badge: { zh: "MVP", en: "MVP" },
     tone: "purple",
   },
   rapid: {
-    title: "快速迭代阶段（已上线）",
-    badge: "已上线",
+    title: { zh: "快速迭代阶段（已上线）", en: "Rapid Iteration (Live)" },
+    badge: { zh: "已上线", en: "Live" },
     tone: "green",
   },
   stable: {
-    title: "慢迭代阶段（稳定维护）",
-    badge: "稳定维护",
+    title: { zh: "慢迭代阶段（稳定维护）", en: "Slow Iteration (Maintenance)" },
+    badge: { zh: "稳定维护", en: "Maintenance" },
     tone: "blue",
   },
 };
 
-const stageOptions: { key: StageKey; label: string; desc: string }[] = [
-  { key: "mvp", label: "MVP 阶段", desc: "项目处于早期开发，尚未上线" },
-  { key: "rapid", label: "快速迭代", desc: "项目已上线，正在快速迭代" },
-  { key: "stable", label: "稳定维护", desc: "项目进入稳定期，慢迭代维护" },
-];
+function stageOptions(locale: "zh" | "en"): { key: StageKey; label: string; desc: string }[] {
+  return locale === "zh"
+    ? [
+        { key: "mvp", label: "MVP 阶段", desc: "项目处于早期开发，尚未上线" },
+        { key: "rapid", label: "快速迭代", desc: "项目已上线，正在快速迭代" },
+        { key: "stable", label: "稳定维护", desc: "项目进入稳定期，慢迭代维护" },
+      ]
+    : [
+        { key: "mvp", label: "MVP Stage", desc: "Early development, not live yet" },
+        { key: "rapid", label: "Rapid Iteration", desc: "Live and iterating quickly" },
+        { key: "stable", label: "Maintenance", desc: "Stable phase with slower maintenance" },
+      ];
+}
 
-const activityLabels: Record<ActivityLevel, string> = {
-  high: "高",
-  "very-high": "很高",
-  medium: "中",
-  low: "低",
-};
+function activityLabel(level: ActivityLevel, locale: "zh" | "en"): string {
+  const labels: Record<ActivityLevel, { zh: string; en: string }> = {
+    high: { zh: "高", en: "High" },
+    "very-high": { zh: "很高", en: "Very High" },
+    medium: { zh: "中", en: "Medium" },
+    low: { zh: "低", en: "Low" },
+  };
+  return labels[level][locale];
+}
 
 function folderBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? path;
@@ -177,12 +189,12 @@ function useContextMenu() {
   return { anchor, open, close };
 }
 
-async function pickApplicationForProject(projectPath: string): Promise<void> {
+async function pickApplicationForProject(projectPath: string, locale: "zh" | "en"): Promise<void> {
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
       multiple: false,
-      title: "选择用于打开该项目的应用程序",
+      title: locale === "zh" ? "选择用于打开该项目的应用程序" : "Choose an app to open this project",
     });
     if (selected === null) return;
     const appPath = Array.isArray(selected) ? selected[0] : selected;
@@ -191,7 +203,9 @@ async function pickApplicationForProject(projectPath: string): Promise<void> {
     }
   } catch {
     const manual = window.prompt(
-      "请输入应用程序的完整路径（例如 /Applications/Cursor.app）：",
+      locale === "zh"
+        ? "请输入应用程序的完整路径（例如 /Applications/Cursor.app）："
+        : "Enter the full application path (for example /Applications/Cursor.app):",
     );
     const trimmed = manual?.trim();
     if (trimmed) setOpenAppForProject(projectPath, trimmed);
@@ -203,11 +217,13 @@ function CardContextMenu({
   onClose,
   onOpenDetail,
   onPull,
+  locale,
 }: {
   anchor: { x: number; y: number; path: string };
   onClose: () => void;
   onOpenDetail: () => void;
   onPull: () => void;
+  locale: "zh" | "en";
 }) {
   useProjectOpenAppsMap();
   const customApp = getOpenAppForProject(anchor.path);
@@ -249,7 +265,7 @@ function CardContextMenu({
             onOpenDetail();
           }}
         >
-          打开卡片详情
+          {locale === "zh" ? "打开卡片详情" : "Open card details"}
         </button>
       </li>
       <li>
@@ -258,10 +274,10 @@ function CardContextMenu({
           className="card-context-menu__item"
           onClick={() => {
             onClose();
-            void pickApplicationForProject(anchor.path);
+            void pickApplicationForProject(anchor.path, locale);
           }}
         >
-          选择默认打开应用…
+          {locale === "zh" ? "选择默认打开应用…" : "Choose default app..."}
         </button>
       </li>
       <li>
@@ -273,7 +289,7 @@ function CardContextMenu({
             onClose();
           }}
         >
-          打开所在目录
+          {locale === "zh" ? "打开所在目录" : "Open containing folder"}
         </button>
       </li>
       <li>
@@ -285,7 +301,7 @@ function CardContextMenu({
             onClose();
           }}
         >
-          拉取最新代码
+          {locale === "zh" ? "拉取最新代码" : "Pull latest code"}
         </button>
       </li>
     </ul>
@@ -311,7 +327,7 @@ const idleLiveStatus: BoardLiveStatus = {
   updatedAt: null,
 };
 
-function BoardLiveProgress({ status }: { status: BoardLiveStatus }) {
+function BoardLiveProgress({ status, locale }: { status: BoardLiveStatus; locale: "zh" | "en" }) {
   const progress =
     status.total > 0
       ? Math.min(100, Math.round((status.completed / status.total) * 100))
@@ -319,20 +335,20 @@ function BoardLiveProgress({ status }: { status: BoardLiveStatus }) {
         ? 100
         : 0;
   const updatedAt = status.updatedAt
-    ? new Intl.DateTimeFormat("zh-CN", {
+    ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
         hour12: false,
       }).format(status.updatedAt)
-    : "未开始";
+    : locale === "zh" ? "未开始" : "Not started";
 
   return (
     <div
       className={`board-live-progress board-live-progress--${status.state}`}
       role="status"
       aria-live="polite"
-      aria-label={`实时进展：${status.message}`}
+      aria-label={`${locale === "zh" ? "实时进展" : "Live progress"}: ${status.message}`}
     >
       <span className="board-live-progress__pulse" aria-hidden />
       <span className="board-live-progress__body">
@@ -377,7 +393,7 @@ function Toast({
 }
 
 /** Infer user-facing message from combined git pull output (stdout/stderr). */
-function messageFromPullOutput(output: string): { message: string; variant: "success" | "info" } {
+function messageFromPullOutput(output: string, locale: "zh" | "en"): { message: string; variant: "success" | "info" } {
   const t = output.trim().toLowerCase();
   const raw = output;
   const upToDateEn = t.includes("already up to date") || t.includes("already up-to-date");
@@ -387,12 +403,20 @@ function messageFromPullOutput(output: string): { message: string; variant: "suc
     raw.includes("已为最新") ||
     raw.includes("无需更新");
   if (upToDateEn || upToDateZh) {
-    return { message: "当前已是最新代码", variant: "info" };
+    return { message: locale === "zh" ? "当前已是最新代码" : "Already up to date", variant: "info" };
   }
-  return { message: "拉取成功", variant: "success" };
+  return { message: locale === "zh" ? "拉取成功" : "Pull completed", variant: "success" };
 }
 
-function MemberAvatars({ count, contributors }: { count: number; contributors?: Contributor[] }) {
+function MemberAvatars({
+  count,
+  contributors,
+  locale,
+}: {
+  count: number;
+  contributors?: Contributor[];
+  locale: "zh" | "en";
+}) {
   const triggerRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -456,7 +480,11 @@ function MemberAvatars({ count, contributors }: { count: number; contributors?: 
   if (count === 0 || !contributors || contributors.length === 0) {
     return (
       <div className="project-card__members">
-        <span>{count > 0 ? `${count} 位成员` : "无成员信息"}</span>
+        <span>
+          {count > 0
+            ? locale === "zh" ? `${count} 位成员` : `${count} member${count === 1 ? "" : "s"}`
+            : locale === "zh" ? "无成员信息" : "No member info"}
+        </span>
       </div>
     );
   }
@@ -484,7 +512,7 @@ function MemberAvatars({ count, contributors }: { count: number; contributors?: 
             <span key={index} className={`project-card__avatar project-card__avatar--${index + 1}`} />
           ))}
         </div>
-        <span>{count} 位成员</span>
+        <span>{locale === "zh" ? `${count} 位成员` : `${count} member${count === 1 ? "" : "s"}`}</span>
       </div>
       {menuOpen &&
         createPortal(
@@ -499,7 +527,7 @@ function MemberAvatars({ count, contributors }: { count: number; contributors?: 
               {contributors.map((c) => (
                 <li key={c.email || c.name}>
                   <strong>{c.name}</strong>
-                  {c.commits > 0 && <em>{c.commits} 次提交</em>}
+                  {c.commits > 0 && <em>{locale === "zh" ? `${c.commits} 次提交` : `${c.commits} commit${c.commits === 1 ? "" : "s"}`}</em>}
                 </li>
               ))}
             </ul>
@@ -516,12 +544,14 @@ function ProjectCard({
   onPull,
   pulling,
   onClick,
+  locale,
 }: {
   project: BoardProject;
   contributors?: Contributor[];
   onPull: () => void;
   pulling: boolean;
   onClick: () => void;
+  locale: "zh" | "en";
 }) {
   const cfg = stageConfig[project.stage];
   const menu = useContextMenu();
@@ -550,7 +580,9 @@ function ProjectCard({
       >
         {pulling && (
           <div className="project-card__overlay">
-            <span className="project-card__overlay-text">正在拉取中<Dots /></span>
+            <span className="project-card__overlay-text">
+              {locale === "zh" ? "正在拉取中" : "Pulling"}<Dots />
+            </span>
           </div>
         )}
       <div className="project-card__head">
@@ -558,7 +590,7 @@ function ProjectCard({
           <button
             type="button"
             className="project-card__name-open"
-            title="用默认应用打开项目"
+            title={locale === "zh" ? "用默认应用打开项目" : "Open project with default app"}
             onClick={(e) => {
               e.stopPropagation();
               openProjectWithSavedApp();
@@ -569,14 +601,14 @@ function ProjectCard({
           <p>{project.description}</p>
         </div>
         <span className={`project-card__badge project-card__badge--${cfg.tone}`}>
-          {cfg.badge}
+          {cfg.badge[locale]}
         </span>
       </div>
 
       {typeof project.progress === "number" ? (
         <div className="project-card__progress">
           <div className="project-card__progress-top">
-            <span>进度</span>
+            <span>{locale === "zh" ? "进度" : "Progress"}</span>
             <strong>{project.progress}%</strong>
           </div>
           <div className="project-card__bar">
@@ -585,27 +617,27 @@ function ProjectCard({
         </div>
       ) : (
         <div className="project-card__version">
-          <span>版本</span>
+          <span>{locale === "zh" ? "版本" : "Version"}</span>
           <strong>{project.version}</strong>
         </div>
       )}
 
       <div className="project-card__stats">
         <div>
-          <span>代码行数</span>
+          <span>{locale === "zh" ? "代码行数" : "Lines"}</span>
           <strong>{project.codeLines}</strong>
         </div>
         <div>
-          <span>活跃度</span>
+          <span>{locale === "zh" ? "活跃度" : "Activity"}</span>
           <strong className={`project-card__activity project-card__activity--${project.activity}`}>
-            {activityLabels[project.activity]}
+            {activityLabel(project.activity, locale)}
           </strong>
         </div>
         <Sparkline values={project.sparkline} tone={project.stage} />
       </div>
 
       <footer className="project-card__foot" onClick={(e) => e.stopPropagation()}>
-        <MemberAvatars count={project.members} contributors={contributors} />
+        <MemberAvatars count={project.members} contributors={contributors} locale={locale} />
         <span>{project.updated}</span>
       </footer>
     </article>
@@ -615,6 +647,7 @@ function ProjectCard({
         onClose={menu.close}
         onOpenDetail={onClick}
         onPull={onPull}
+        locale={locale}
       />,
       document.body,
     )}
@@ -629,6 +662,7 @@ function StageSection({
   pullingPaths,
   onPull,
   onProjectClick,
+  locale,
 }: {
   stage: StageKey;
   projects: BoardProject[];
@@ -636,6 +670,7 @@ function StageSection({
   pullingPaths: Set<string>;
   onPull: (path: string) => void;
   onProjectClick: (path: string) => void;
+  locale: "zh" | "en";
 }) {
   const cfg = stageConfig[stage];
   const [expanded, setExpanded] = useState(false);
@@ -653,10 +688,12 @@ function StageSection({
       >
         <div className="project-stage__title">
           <span className={`project-stage__dot project-stage__dot--${cfg.tone}`} />
-          <h2>{cfg.title}</h2>
+          <h2>{cfg.title[locale]}</h2>
         </div>
         <span className="project-stage__all">
-          {projectList.length} 个项目
+          {locale === "zh"
+            ? `${projectList.length} 个项目`
+            : `${projectList.length} project${projectList.length === 1 ? "" : "s"}`}
           <svg
             className={`project-stage__chevron${expanded ? " project-stage__chevron--up" : ""}`}
             viewBox="0 0 24 24"
@@ -677,6 +714,7 @@ function StageSection({
             pulling={pullingPaths.has(project.path)}
             onPull={() => onPull(project.path)}
             onClick={() => onProjectClick(project.path)}
+            locale={locale}
           />
         ))}
       </div>
@@ -687,13 +725,15 @@ function StageSection({
 function StagePicker({
   value,
   onChange,
+  locale,
 }: {
   value: StageKey;
   onChange: (stage: StageKey) => void;
+  locale: "zh" | "en";
 }) {
   return (
-    <div className="stage-picker" role="radiogroup" aria-label="项目阶段">
-      {stageOptions.map((opt) => {
+    <div className="stage-picker" role="radiogroup" aria-label={locale === "zh" ? "项目阶段" : "Project stage"}>
+      {stageOptions(locale).map((opt) => {
         const cfg = stageConfig[opt.key];
         const isActive = value === opt.key;
         return (
@@ -744,7 +784,15 @@ function BranchIcon() {
   );
 }
 
-function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: string }) {
+function GitInfoBlock({
+  git,
+  projectPath,
+  locale,
+}: {
+  git: ProjectGitInfo;
+  projectPath: string;
+  locale: "zh" | "en";
+}) {
   const currentBranch = git.branch;
   const allBranches = git.branches;
   const defaultBranch = currentBranch ?? allBranches[0] ?? null;
@@ -785,7 +833,7 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
     return (
       <div className="git-info git-info--empty">
         <GitIcon />
-        <span>未检测到 Git 仓库</span>
+        <span>{locale === "zh" ? "未检测到 Git 仓库" : "No Git repository detected"}</span>
       </div>
     );
   }
@@ -803,12 +851,12 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
     <div className="git-info">
       <div className="git-info__header">
         <GitIcon />
-        <span className="git-info__label">Git 仓库</span>
+        <span className="git-info__label">{locale === "zh" ? "Git 仓库" : "Git Repository"}</span>
       </div>
       <dl className="git-info__list">
         {currentBranch && (
           <div className="git-info__row">
-            <dt><BranchIcon /> 当前分支</dt>
+            <dt><BranchIcon /> {locale === "zh" ? "当前分支" : "Current branch"}</dt>
             <dd>
               <button
                 type="button"
@@ -824,7 +872,7 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
         )}
         {otherBranches.length > 0 && (
           <div className="git-info__row">
-            <dt><BranchIcon /> 其他分支</dt>
+            <dt><BranchIcon /> {locale === "zh" ? "其他分支" : "Other branches"}</dt>
             <dd className="git-info__branches">
               {otherBranches.map((b) => (
                 <button
@@ -832,7 +880,7 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
                   type="button"
                   className={`git-info__branch-btn${b === activeBranch ? " git-info__branch-btn--active" : ""}`}
                   onClick={() => handleBranchClick(b)}
-                  title={`查看 ${b}`}
+                  title={locale === "zh" ? `查看 ${b}` : `View ${b}`}
                 >
                   {b}
                 </button>
@@ -842,13 +890,13 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
         )}
         {git.remote_url && (
           <div className="git-info__row">
-            <dt>远程地址</dt>
+            <dt>{locale === "zh" ? "远程地址" : "Remote URL"}</dt>
             <dd className="git-info__remote">{git.remote_url}</dd>
           </div>
         )}
         {branchCommit && branchCommit.hash && (
           <div className="git-info__row">
-            <dt>最近提交</dt>
+            <dt>{locale === "zh" ? "最近提交" : "Latest commit"}</dt>
             <dd>
               <span className="git-info__hash">{branchCommit.hash}</span>
               {branchCommit.message && (
@@ -859,7 +907,7 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
         )}
         {branchCommit && branchCommit.author && (
           <div className="git-info__row">
-            <dt>提交者</dt>
+            <dt>{locale === "zh" ? "提交者" : "Committer"}</dt>
             <dd>
               <span>{branchCommit.author}</span>
               {branchCommit.date && (
@@ -874,6 +922,7 @@ function GitInfoBlock({ git, projectPath }: { git: ProjectGitInfo; projectPath: 
 }
 
 export default function ProjectBoardPage() {
+  const { locale } = useI18n();
   const searchId = useId();
   const projectPaths = useProjectPaths();
   const stagesMap = useProjectStagesMap();
@@ -916,7 +965,7 @@ export default function ProjectBoardPage() {
     setPullingPaths((prev) => new Set(prev).add(projectPath));
     setLiveStatus({
       state: "syncing",
-      message: "正在检查本地修改",
+      message: locale === "zh" ? "正在检查本地修改" : "Checking local changes",
       detail: projectName,
       completed: 0,
       total: 2,
@@ -926,13 +975,15 @@ export default function ProjectBoardPage() {
       const status = await gitCheckLocalChanges(projectPath);
       if (status?.has_changes) {
         const ok = window.confirm(
-          `检测到本地有修改（${status.details}），拉取最新代码可能会导致冲突。\n\n是否继续拉取？`,
+          locale === "zh"
+            ? `检测到本地有修改（${status.details}），拉取最新代码可能会导致冲突。\n\n是否继续拉取？`
+            : `Local changes detected (${status.details}). Pulling latest code may cause conflicts.\n\nContinue pulling?`,
         );
         if (!ok) {
           setPullingPaths((prev) => { const n = new Set(prev); n.delete(projectPath); return n; });
           setLiveStatus({
             state: "idle",
-            message: "已取消拉取",
+            message: locale === "zh" ? "已取消拉取" : "Pull cancelled",
             detail: projectName,
             completed: 0,
             total: 0,
@@ -943,14 +994,14 @@ export default function ProjectBoardPage() {
       }
       setLiveStatus({
         state: "syncing",
-        message: "正在拉取最新代码",
+        message: locale === "zh" ? "正在拉取最新代码" : "Pulling latest code",
         detail: projectName,
         completed: 1,
         total: 2,
         updatedAt: Date.now(),
       });
       const output = await gitPull(projectPath);
-      const { message, variant } = messageFromPullOutput(output);
+      const { message, variant } = messageFromPullOutput(output, locale);
       setBoardToast({ message, variant });
       setLiveStatus({
         state: "done",
@@ -963,12 +1014,12 @@ export default function ProjectBoardPage() {
       setRefreshEpoch((n) => n + 1);
     } catch (e) {
       setBoardToast({
-        message: typeof e === "string" ? e : "拉取失败",
+        message: typeof e === "string" ? e : locale === "zh" ? "拉取失败" : "Pull failed",
         variant: "error",
       });
       setLiveStatus({
         state: "error",
-        message: "拉取失败",
+        message: locale === "zh" ? "拉取失败" : "Pull failed",
         detail: projectName,
         completed: 0,
         total: 0,
@@ -977,7 +1028,7 @@ export default function ProjectBoardPage() {
     } finally {
       setPullingPaths((prev) => { const n = new Set(prev); n.delete(projectPath); return n; });
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -995,7 +1046,7 @@ export default function ProjectBoardPage() {
     if (projectPaths.length === 0) {
       setLiveStatus({
         state: "idle",
-        message: "暂无项目",
+        message: locale === "zh" ? "暂无项目" : "No projects",
         completed: 0,
         total: 0,
         updatedAt: Date.now(),
@@ -1017,8 +1068,11 @@ export default function ProjectBoardPage() {
       setBoardLoading(false);
       setLiveStatus({
         state: "done",
-        message: "已载入缓存",
-        detail: `${projectPaths.length} 个项目`,
+        message: locale === "zh" ? "已载入缓存" : "Loaded from cache",
+        detail:
+          locale === "zh"
+            ? `${projectPaths.length} 个项目`
+            : `${projectPaths.length} project${projectPaths.length === 1 ? "" : "s"}`,
         completed: projectPaths.length,
         total: projectPaths.length,
         updatedAt: boardCache.timestamp,
@@ -1054,7 +1108,10 @@ export default function ProjectBoardPage() {
       setLiveStatus({
         state,
         message,
-        detail: path ? folderBasename(path) : `${totalPaths} 个项目`,
+        detail:
+          path
+            ? folderBasename(path)
+            : locale === "zh" ? `${totalPaths} 个项目` : `${totalPaths} project${totalPaths === 1 ? "" : "s"}`,
         completed,
         total: totalTasks,
         updatedAt: Date.now(),
@@ -1064,11 +1121,11 @@ export default function ProjectBoardPage() {
     const finishTask = (path: string, label: string) => {
       completed += 1;
       pending -= 1;
-      updateLiveStatus("scanning", `已完成${label}`, path);
+      updateLiveStatus("scanning", locale === "zh" ? `已完成${label}` : `Finished ${label}`, path);
       commit();
     };
 
-    updateLiveStatus("scanning", "准备扫描项目指标");
+    updateLiveStatus("scanning", locale === "zh" ? "准备扫描项目指标" : "Preparing project metrics");
 
     const commit = () => {
       if (pending === 0 && !cancelled) {
@@ -1093,8 +1150,8 @@ export default function ProjectBoardPage() {
         setBoardLoading(false);
         setLiveStatus({
           state: "done",
-          message: "看板已更新",
-          detail: `${totalPaths} 个项目`,
+          message: locale === "zh" ? "看板已更新" : "Board updated",
+          detail: locale === "zh" ? `${totalPaths} 个项目` : `${totalPaths} project${totalPaths === 1 ? "" : "s"}`,
           completed: totalTasks,
           total: totalTasks,
           updatedAt: snapshot.timestamp,
@@ -1122,7 +1179,7 @@ export default function ProjectBoardPage() {
       const timeoutId = window.setTimeout(() => {
         if (settled || cancelled) return;
         settled = true;
-        finishTask(path, `${doneLabel}（超时跳过）`);
+        finishTask(path, locale === "zh" ? `${doneLabel}（超时跳过）` : `${doneLabel} (timed out)`);
       }, timeoutMs);
       timeoutIds.push(timeoutId);
 
@@ -1138,15 +1195,15 @@ export default function ProjectBoardPage() {
           if (settled || cancelled) return;
           settled = true;
           window.clearTimeout(timeoutId);
-          finishTask(path, `${doneLabel}（失败跳过）`);
+          finishTask(path, locale === "zh" ? `${doneLabel}（失败跳过）` : `${doneLabel} (failed)`);
         });
     };
 
     for (const path of projectPaths) {
       runMetric({
         path,
-        startMessage: "正在读取代码行数",
-        doneLabel: "代码行数",
+        startMessage: locale === "zh" ? "正在读取代码行数" : "Reading code lines",
+        doneLabel: locale === "zh" ? "代码行数" : "code lines",
         task: () => countProjectCodeLines(path),
         onResult: (result) => {
           if (result) codeResults.set(path, result);
@@ -1154,8 +1211,8 @@ export default function ProjectBoardPage() {
       });
       runMetric({
         path,
-        startMessage: "正在读取版本信息",
-        doneLabel: "版本信息",
+        startMessage: locale === "zh" ? "正在读取版本信息" : "Reading version info",
+        doneLabel: locale === "zh" ? "版本信息" : "version info",
         task: () => readPackageVersion(path),
         onResult: (version) => {
           if (version) versionResults.set(path, version);
@@ -1163,8 +1220,8 @@ export default function ProjectBoardPage() {
       });
       runMetric({
         path,
-        startMessage: "正在统计近 30 天提交",
-        doneLabel: "活跃度",
+        startMessage: locale === "zh" ? "正在统计近 30 天提交" : "Counting commits from last 30 days",
+        doneLabel: locale === "zh" ? "活跃度" : "activity",
         task: () => gitCommitCountLastNDays(path, 30),
         onResult: (count) => {
           activityResults.set(path, commitsToActivity(count));
@@ -1172,8 +1229,8 @@ export default function ProjectBoardPage() {
       });
       runMetric({
         path,
-        startMessage: "正在生成活跃曲线",
-        doneLabel: "活跃曲线",
+        startMessage: locale === "zh" ? "正在生成活跃曲线" : "Generating activity curve",
+        doneLabel: locale === "zh" ? "活跃曲线" : "activity curve",
         task: () => gitWeeklyCommitCounts(path),
         onResult: (counts) => {
           sparklineResults.set(path, counts);
@@ -1181,8 +1238,8 @@ export default function ProjectBoardPage() {
       });
       runMetric({
         path,
-        startMessage: "正在读取成员贡献",
-        doneLabel: "成员贡献",
+        startMessage: locale === "zh" ? "正在读取成员贡献" : "Reading contributor stats",
+        doneLabel: locale === "zh" ? "成员贡献" : "contributors",
         task: () => gitContributors(path),
         onResult: (list) => {
           if (list.length > 0) membersResults.set(path, list);
@@ -1190,8 +1247,8 @@ export default function ProjectBoardPage() {
       });
       runMetric({
         path,
-        startMessage: "正在检查最新提交",
-        doneLabel: "最新提交",
+        startMessage: locale === "zh" ? "正在检查最新提交" : "Checking latest commit",
+        doneLabel: locale === "zh" ? "最新提交" : "latest commit",
         task: () => detectProjectGitInfo(path),
         onResult: (info) => {
           if (info?.last_commit_date) updatedResults.set(path, info.last_commit_date);
@@ -1202,8 +1259,8 @@ export default function ProjectBoardPage() {
     for (const path of mvpPaths) {
       runMetric({
         path,
-        startMessage: "正在估算 MVP 进度",
-        doneLabel: "MVP 进度",
+        startMessage: locale === "zh" ? "正在估算 MVP 进度" : "Estimating MVP progress",
+        doneLabel: locale === "zh" ? "MVP 进度" : "MVP progress",
         task: () => estimateProjectProgress(path),
         onResult: (result) => {
           if (result) progressResults.set(path, result.progress);
@@ -1217,7 +1274,7 @@ export default function ProjectBoardPage() {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [projectPaths, stagesMap, refreshEpoch]);
+  }, [projectPaths, stagesMap, refreshEpoch, locale]);
 
   const projects = useMemo<BoardProject[]>(() => {
     return projectPaths.map((path) => {
@@ -1232,7 +1289,7 @@ export default function ProjectBoardPage() {
       return {
         path,
         name: folderBasename(path),
-        description: "项目开发中",
+        description: locale === "zh" ? "项目开发中" : "In development",
         stage,
         progress: stage === "mvp" ? (progressMap.get(path) ?? 0) : undefined,
         version: stage !== "mvp" ? (versionMap.get(path) ?? "—") : undefined,
@@ -1244,7 +1301,7 @@ export default function ProjectBoardPage() {
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectPaths, stagesMap, codeLinesMap, versionMap, progressMap, activityMap, sparklineMap, membersMap, updatedMap]);
+  }, [projectPaths, stagesMap, codeLinesMap, versionMap, progressMap, activityMap, sparklineMap, membersMap, updatedMap, locale]);
 
   const filteredProjects = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1287,11 +1344,11 @@ export default function ProjectBoardPage() {
       total += score;
     }
     const avg = total / activityMap.size;
-    if (avg >= 3.5) return "很高";
-    if (avg >= 2.5) return "高";
-    if (avg >= 1.5) return "中等";
-    return "低";
-  }, [activityMap]);
+    if (avg >= 3.5) return locale === "zh" ? "很高" : "Very High";
+    if (avg >= 2.5) return locale === "zh" ? "高" : "High";
+    if (avg >= 1.5) return locale === "zh" ? "中等" : "Medium";
+    return locale === "zh" ? "低" : "Low";
+  }, [activityMap, locale]);
 
   const weeklyCommitsThisWeek = useMemo(() => {
     let sum = 0;
@@ -1315,21 +1372,25 @@ export default function ProjectBoardPage() {
 
   return (
     <div className="project-board">
-      <header className="project-board__header">
-        <div>
-          <h1>项目看板</h1>
-          <p>全局视角，掌握所有项目的进展与健康状态</p>
+      <header className="page-header project-board__page-header">
+        <div className="page-header__title-bar">
+          <div className="page-title__row">
+            <h2>{locale === "zh" ? "项目看板" : "Project Board"}</h2>
+          </div>
+          <div className="project-board__header-actions">
+            {(liveStatus.state === "scanning" || liveStatus.state === "syncing") && (
+              <BoardLiveProgress status={liveStatus} locale={locale} />
+            )}
+            <PageRefreshButton
+              onClick={() => setRefreshEpoch((n) => n + 1)}
+              spinning={boardLoading}
+              label={locale === "zh" ? "重新加载项目看板" : "Reload project board"}
+            />
+          </div>
         </div>
-        <div className="project-board__header-actions">
-          {(liveStatus.state === "scanning" || liveStatus.state === "syncing") && (
-            <BoardLiveProgress status={liveStatus} />
-          )}
-          <PageRefreshButton
-            onClick={() => setRefreshEpoch((n) => n + 1)}
-            spinning={boardLoading}
-            label="重新加载项目看板"
-          />
-        </div>
+        <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.88rem" }}>
+          {locale === "zh" ? "全局视角，掌握所有项目的进展与健康状态" : "A global view of project progress and health"}
+        </p>
       </header>
 
       <div className="project-board__actions">
@@ -1338,7 +1399,7 @@ export default function ProjectBoardPage() {
           <input
             id={searchId}
             type="search"
-            placeholder="搜索项目..."
+            placeholder={locale === "zh" ? "搜索项目..." : "Search projects..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -1347,48 +1408,52 @@ export default function ProjectBoardPage() {
 
       {emptyState ? (
         <div className="project-board__empty">
-          <p>暂无项目，请在侧栏点击「添加项目」导入你的第一个项目</p>
+          <p>
+            {locale === "zh"
+              ? "暂无项目，请在侧栏点击「添加项目」导入你的第一个项目"
+              : "No projects yet. Click Add Project in the sidebar to import your first project."}
+          </p>
         </div>
       ) : (
         <>
-          <section className="project-summary" aria-label="项目总览">
+          <section className="project-summary" aria-label={locale === "zh" ? "项目总览" : "Project summary"}>
             <div className="project-summary__metrics">
-              <h2>项目总览</h2>
+              <h2>{locale === "zh" ? "项目总览" : "Project Summary"}</h2>
               <div className="project-summary__metric">
-                <span>总项目数</span>
+                <span>{locale === "zh" ? "总项目数" : "Total Projects"}</span>
                 <strong>{totalCount}</strong>
               </div>
               <div className="project-summary__metric project-summary__metric--wide">
-                <span>总代码行数</span>
-                <strong>{totalCodeLines > 0 ? formatNumber(totalCodeLines) : "—"} <em>行</em></strong>
+                <span>{locale === "zh" ? "总代码行数" : "Total Code Lines"}</span>
+                <strong>{totalCodeLines > 0 ? formatNumber(totalCodeLines) : "—"} <em>{locale === "zh" ? "行" : "lines"}</em></strong>
               </div>
               <div className="project-summary__metric project-summary__metric--activity">
-                <span>平均活跃度</span>
+                <span>{locale === "zh" ? "平均活跃度" : "Avg Activity"}</span>
                 <div>
                   <Sparkline values={overviewSparkline} tone="overview" />
                   <strong>{averageActivityLabel}</strong>
                 </div>
               </div>
               <div className="project-summary__metric">
-                <span>本周更新</span>
-                <strong>{weeklyCommitsThisWeek > 0 ? weeklyCommitsThisWeek : "—"} <em>次</em></strong>
+                <span>{locale === "zh" ? "本周更新" : "This Week"}</span>
+                <strong>{weeklyCommitsThisWeek > 0 ? weeklyCommitsThisWeek : "—"} <em>{locale === "zh" ? "次" : "updates"}</em></strong>
               </div>
             </div>
             <div className="project-summary__donut" aria-hidden />
             <ul className="project-summary__legend">
               <li>
                 <span className="project-summary__legend-dot project-summary__legend-dot--purple" />
-                MVP 阶段（未上线）
+                {stageConfig.mvp.title[locale]}
                 <strong>{grouped.mvp.length} ({totalCount > 0 ? Math.round((grouped.mvp.length / totalCount) * 100) : 0}%)</strong>
               </li>
               <li>
                 <span className="project-summary__legend-dot project-summary__legend-dot--green" />
-                快速迭代阶段（已上线）
+                {stageConfig.rapid.title[locale]}
                 <strong>{grouped.rapid.length} ({totalCount > 0 ? Math.round((grouped.rapid.length / totalCount) * 100) : 0}%)</strong>
               </li>
               <li>
                 <span className="project-summary__legend-dot project-summary__legend-dot--blue" />
-                慢迭代阶段（稳定维护）
+                {stageConfig.stable.title[locale]}
                 <strong>{grouped.stable.length} ({totalCount > 0 ? Math.round((grouped.stable.length / totalCount) * 100) : 0}%)</strong>
               </li>
             </ul>
@@ -1396,13 +1461,17 @@ export default function ProjectBoardPage() {
 
           {noSearchResults ? (
             <div className="project-board__empty">
-              <p>没有找到匹配「{searchQuery}」的项目</p>
+              <p>
+                {locale === "zh"
+                  ? `没有找到匹配「${searchQuery}」的项目`
+                  : `No projects matching "${searchQuery}"`}
+              </p>
             </div>
           ) : (
             <>
-              <StageSection stage="mvp" projects={grouped.mvp} membersMap={membersMap} pullingPaths={pullingPaths} onPull={handlePull} onProjectClick={setSelectedPath} />
-              <StageSection stage="rapid" projects={grouped.rapid} membersMap={membersMap} pullingPaths={pullingPaths} onPull={handlePull} onProjectClick={setSelectedPath} />
-              <StageSection stage="stable" projects={grouped.stable} membersMap={membersMap} pullingPaths={pullingPaths} onPull={handlePull} onProjectClick={setSelectedPath} />
+              <StageSection stage="mvp" projects={grouped.mvp} membersMap={membersMap} pullingPaths={pullingPaths} onPull={handlePull} onProjectClick={setSelectedPath} locale={locale} />
+              <StageSection stage="rapid" projects={grouped.rapid} membersMap={membersMap} pullingPaths={pullingPaths} onPull={handlePull} onProjectClick={setSelectedPath} locale={locale} />
+              <StageSection stage="stable" projects={grouped.stable} membersMap={membersMap} pullingPaths={pullingPaths} onPull={handlePull} onProjectClick={setSelectedPath} locale={locale} />
             </>
           )}
         </>
@@ -1421,18 +1490,20 @@ export default function ProjectBoardPage() {
                 void revealPathInFolder(selectedPath, { alertOnError: true });
               }}
             >
-              打开所在目录
+              {locale === "zh" ? "打开所在目录" : "Open containing folder"}
             </button>
           ) : null
         }
         onClose={() => setSelectedPath(null)}
       >
-        {gitInfo && <GitInfoBlock git={gitInfo} projectPath={selectedPath!} />}
+        {gitInfo && <GitInfoBlock git={gitInfo} projectPath={selectedPath!} locale={locale} />}
         <div className="stage-picker-section">
-          <h3 className="stage-picker-section__title">项目阶段</h3>
-          <p className="stage-picker-section__hint">选择项目当前所处的开发阶段</p>
+          <h3 className="stage-picker-section__title">{locale === "zh" ? "项目阶段" : "Project Stage"}</h3>
+          <p className="stage-picker-section__hint">
+            {locale === "zh" ? "选择项目当前所处的开发阶段" : "Choose the current development stage"}
+          </p>
           {selectedStage !== null && (
-            <StagePicker value={selectedStage} onChange={handleStageChange} />
+            <StagePicker value={selectedStage} onChange={handleStageChange} locale={locale} />
           )}
         </div>
       </DetailSheet>

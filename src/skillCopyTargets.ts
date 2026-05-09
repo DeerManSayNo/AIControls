@@ -100,6 +100,19 @@ function mergeProjectRootsForCopy(
 }
 
 function globalItems(agentId: string): CopySkillMenuSection["items"] {
+  if (agentId.startsWith("useragent-")) {
+    return [
+      {
+        id: `g:${agentId}:0`,
+        label: "自定义 · skills/",
+        payload: {
+          destKind: "global" as const,
+          agentId,
+          bucketIndex: 0,
+        },
+      },
+    ];
+  }
   const rels = SKILL_BUCKET_REL[agentId];
   if (!rels) return [];
   const agentName = AGENT_UI_NAME[agentId] ?? agentId;
@@ -151,6 +164,9 @@ function projectItems(
   projectRoot: string,
   agentId: string,
 ): CopySkillMenuSection["items"] {
+  if (agentId.startsWith("useragent-")) {
+    return [];
+  }
   const rels = SKILL_BUCKET_REL[agentId];
   if (!rels) return [];
   const agentName = AGENT_UI_NAME[agentId] ?? agentId;
@@ -174,6 +190,8 @@ export function buildCopySkillMenuSections(params: {
   projectPaths: readonly string[];
   /** Agent 页侧栏已扫过的项目路径（与全局同一生态合并展示时的项目列表） */
   agentProjectScanPaths: readonly string[];
+  /** 用户添加的 `useragent-*` id，用于「复制到 · 用户全局」额外目标 */
+  userCustomAgentIds?: readonly string[];
   /** 首页导入对话框等处设为 `"导入"`，以便分段标题写「导入到」 */
   copyVerb?: "复制" | "导入";
   /** 普通复制默认不进入「我的」；仅明确导入/收藏到我的技能库时开启。 */
@@ -185,6 +203,7 @@ export function buildCopySkillMenuSections(params: {
     projectRoot,
     projectPaths,
     agentProjectScanPaths,
+    userCustomAgentIds = [],
     copyVerb = "复制",
     includeMyLibrary = false,
   } = params;
@@ -199,20 +218,27 @@ export function buildCopySkillMenuSections(params: {
       items: globalItems(ecosystem),
     });
     for (const p of agentProjectScanPaths) {
+      const pi = projectItems(p, ecosystem);
+      if (pi.length === 0) continue;
       sections.push({
         key: `proj:${p}`,
         title: `复制到 · 项目「${folderBasename(p)}」`,
-        items: projectItems(p, ecosystem),
+        items: pi,
       });
     }
     return maybePrependMine(sections);
   }
 
+  const globalAllItems = [
+    ...AGENT_ORDER.flatMap((id) => globalItems(id)),
+    ...userCustomAgentIds.flatMap((id) => globalItems(id)),
+  ];
+
   if (dataSet === "project") {
     sections.push({
       key: "global-all",
       title: "复制到 · 用户全局",
-      items: AGENT_ORDER.flatMap((id) => globalItems(id)),
+      items: globalAllItems,
     });
     const merged = mergeProjectRootsForCopy(projectPaths, projectRoot);
     const cur = projectRoot?.trim()
@@ -235,7 +261,7 @@ export function buildCopySkillMenuSections(params: {
     sections.push({
       key: "global-all",
       title: "复制到 · 用户全局",
-      items: AGENT_ORDER.flatMap((id) => globalItems(id)),
+      items: globalAllItems,
     });
     for (const p of projectPaths) {
       const pt = p.trim();

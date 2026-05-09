@@ -93,6 +93,11 @@ fn stable_id(prefix: &str, path: &Path) -> String {
     format!("{}-{:x}", prefix, h.finish())
 }
 
+/// Stable id for a user-added agent root (persisted in `user_agents.json`).
+pub fn user_agent_stable_id(canonical_root: &Path) -> String {
+    stable_id("useragent", canonical_root)
+}
+
 /// macOS: `/Applications/Foo.app`
 #[cfg(target_os = "macos")]
 fn app_bundle_path(name: &str) -> Option<PathBuf> {
@@ -1084,6 +1089,38 @@ fn walk_json_for_mcp(dir: &Path, depth: usize, max_depth: usize, list: &mut Vec<
 
 /// Walks `root`: `SKILL.md` only under conventional agent `skills/` dirs (see `collect_project_skill_paths`),
 /// agent rules (see `collect_project_rule_paths`), and MCP from JSON (`mcp.json`, settings with MCP keys, etc.).
+/// Global inventory under a user-chosen dot-folder root (e.g. `~/.mytool`):
+/// `skills/`, `commands/`, `rules/`, plus `mcp.json` / `settings.json` / `config.toml` at the root.
+pub fn global_inventory_at_agent_root(root: &Path) -> Result<AgentInventory, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("无法解析路径: {e}"))?;
+    if !root.is_dir() {
+        return Err("所选路径不是文件夹".into());
+    }
+
+    let mut skills = Vec::new();
+    let mut mcp = Vec::new();
+    let mut rules = Vec::new();
+
+    push_skills_from_roots(&[root.join("skills")], &mut skills);
+    push_prompt_commands_from_roots(&[root.join("commands")], &mut skills);
+    parse_mcp_json_files(&[root.join("mcp.json")], &mut mcp);
+    merge_mcp_from_json_files(&[root.join("settings.json")], &mut mcp);
+    parse_mcp_toml_files(&[root.join("config.toml")], &mut mcp);
+    let mut rule_paths = Vec::new();
+    let rules_dir = root.join("rules");
+    if rules_dir.is_dir() {
+        walk_rules_mdc_md(&rules_dir, 0, 12, &mut rule_paths);
+    }
+    dedupe_paths(&mut rule_paths);
+    push_rules_from_paths(rule_paths, &mut rules);
+
+    dedupe_mcp(&mut mcp);
+
+    Ok(AgentInventory { skills, mcp, rules })
+}
+
 pub fn scan_project_directory(root: &Path) -> Result<AgentInventory, String> {
     let root = root
         .canonicalize()

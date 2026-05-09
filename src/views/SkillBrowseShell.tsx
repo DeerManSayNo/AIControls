@@ -15,6 +15,7 @@ import {
   deepseekReclassifyWithCategories,
   deepseekResummarizeAsset,
   deepseekSummarizeInventory,
+  deepseekTranslateCustomCategories,
   getCustomCategories as loadCustomCategoriesFromStorage,
   getDeepseekSettings,
   resetAllCategories,
@@ -141,6 +142,17 @@ const FALLBACK_AGENT_IDS = [
 function agentLabelForId(id: string, locale: "zh" | "en"): string {
   if (id === "__other__") return locale === "zh" ? "其他" : "Other";
   return AGENT_LABEL_BY_ID[id] ?? id;
+}
+
+function customCategoryLabel(cat: CustomCategory, locale: "zh" | "en"): string {
+  if (locale === "zh") return cat.labelZh;
+  const en = cat.labelEn?.trim();
+  if (en) return en;
+  return cat.slug
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function folderBasename(path: string): string {
@@ -637,6 +649,7 @@ export default function SkillBrowseShell({
   } | null>(null);
   /** 递增以使数据 useEffect 重新拉取（与手动刷新配合） */
   const [refreshKey, setRefreshKey] = useState(0);
+  const [userCustomAgentIds, setUserCustomAgentIds] = useState<string[]>([]);
   /** 「全部」资产页：汇总 vs 我的技能库 */
   const [aggregateAssetsTab, setAggregateAssetsTab] = useState<"all" | "mine">(
     "all",
@@ -676,6 +689,23 @@ export default function SkillBrowseShell({
     setRefreshKey((k) => k + 1);
   }, [dataSet, ecosystem, projectRoot]);
 
+  useEffect(() => {
+    const bump = () => {
+      clearAggregateSnapshotCache();
+      setRefreshKey((k) => k + 1);
+    };
+    window.addEventListener("aicontrols-agents-changed", bump);
+    return () => window.removeEventListener("aicontrols-agents-changed", bump);
+  }, []);
+
+  useEffect(() => {
+    listDetectedAgents().then((agents) => {
+      setUserCustomAgentIds(
+        (agents ?? []).filter((a) => a.id.startsWith("useragent-")).map((a) => a.id),
+      );
+    });
+  }, [refreshKey]);
+
   const toggleAggregateAgentFilter = useCallback((agentId: string) => {
     setAggregateAgentFilter((prev) =>
       prev.includes(agentId)
@@ -683,6 +713,17 @@ export default function SkillBrowseShell({
         : [...prev, agentId],
     );
   }, []);
+
+  /** 自定义 Agent 从侧栏移除后，从筛选勾选状态中剔除对应 id。 */
+  useEffect(() => {
+    if (dataSet !== "aggregate" || !aggregateSnapshot) return;
+    setAggregateAgentFilter((prev) =>
+      prev.filter((id) => {
+        if (!id.startsWith("useragent-")) return true;
+        return aggregateSnapshot.agents.some((a) => a.id === id);
+      }),
+    );
+  }, [aggregateSnapshot, dataSet]);
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -708,7 +749,7 @@ export default function SkillBrowseShell({
         ...aggregateSnapshot.projects.map((p) => p.inv).filter((x): x is AgentInventory => !!x),
       ],
     );
-    const cats = await deepseekRegenerateCategories(merged);
+    const cats = await deepseekRegenerateCategories(merged, locale);
     if (!cats) {
       setReclassifyMode("idle");
       return;
@@ -719,7 +760,7 @@ export default function SkillBrowseShell({
     setCustomCategories(cats);
     setCustomScenario("all");
     setReclassifyMode("reviewing");
-  }, [aggregateSnapshot, savedSnapshotBackup]);
+  }, [aggregateSnapshot, savedSnapshotBackup, locale]);
 
   const handleReclassifyConfirm = useCallback(async () => {
     if (!aggregateSnapshot || !customCategories) return;
@@ -821,6 +862,23 @@ export default function SkillBrowseShell({
     });
     return () => { cancelled = true; };
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (locale !== "en" || !customCategories?.length) return;
+    if (customCategories.every((cat) => cat.labelEn?.trim())) return;
+    let cancelled = false;
+    (async () => {
+      const cfg = await getDeepseekSettings();
+      if (cancelled || !cfg?.apiKeyConfigured) return;
+      const translated = await deepseekTranslateCustomCategories(customCategories, locale);
+      if (!cancelled && translated?.length) {
+        setCustomCategories(translated);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [customCategories, locale]);
 
   useEffect(() => {
     if (
@@ -1447,6 +1505,16 @@ export default function SkillBrowseShell({
       rows = applyKindAndQuery(rows);
       const nextAgentOptions = agentOptionsFromRows(rows, locale);
       const optionIds = new Set(nextAgentOptions.map((option) => option.id));
+      for (const a of aggregateSnapshot.agents) {
+        if (!optionIds.has(a.id)) {
+          nextAgentOptions.push({
+            id: a.id,
+            label: a.title,
+            count: 0,
+          });
+          optionIds.add(a.id);
+        }
+      }
       for (const id of selectedAgentIds) {
         if (!optionIds.has(id)) {
           nextAgentOptions.push({
@@ -1454,8 +1522,12 @@ export default function SkillBrowseShell({
             label: agentLabelForId(id, locale),
             count: 0,
           });
+          optionIds.add(id);
         }
       }
+      nextAgentOptions.sort(
+        (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+      );
       if (selectedAgentIds.size > 0) {
         rows = rows.filter((row) => selectedAgentIds.has(row.agentId ?? row.ecosystem));
       }
@@ -1679,6 +1751,7 @@ export default function SkillBrowseShell({
         projectRoot,
         projectPaths,
         agentProjectScanPaths: agentProjectScans.map((s) => s.path),
+        userCustomAgentIds,
       });
     },
     [
@@ -1689,6 +1762,7 @@ export default function SkillBrowseShell({
       agentProjectScans,
       skillCopyTargetModalRow?.kind,
       detectedAgentTargets,
+      userCustomAgentIds,
     ],
   );
 
@@ -1905,7 +1979,7 @@ export default function SkillBrowseShell({
             {dataSet === "aggregate" && aggregateAssetsTab === "mine" ? (
               <button
                 type="button"
-                className="page-header__my-import"
+                className="page-header__primary-action"
                 disabled={mySkillsImportBusy || refreshBusy}
                 onClick={() => {
                   void (async () => {
@@ -1941,7 +2015,12 @@ export default function SkillBrowseShell({
                   })();
                 }}
               >
-                {locale === "zh" ? "导入技能文件夹…" : "Import skill folder…"}
+                <span className="page-header__primary-action-icon" aria-hidden>
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <span>{locale === "zh" ? "导入技能文件夹" : "Import Folder"}</span>
               </button>
             ) : null}
           </div>
@@ -2154,19 +2233,22 @@ export default function SkillBrowseShell({
                 >
                   {locale === "zh" ? "全部" : "All"} ({customCategoryCounts.all})
                 </button>
-                {customCategories!.map((cat) => (
-                  <button
-                    key={cat.slug}
-                    type="button"
-                    role="tab"
-                    aria-selected={customScenario === cat.slug}
-                    title={cat.labelZh}
-                    className={`scenario-chip scenario-chip--custom${customScenario === cat.slug ? " active" : ""}`}
-                    onClick={() => setCustomScenario(cat.slug)}
-                  >
-                    {cat.labelZh} ({customCategoryCounts[cat.slug] ?? 0})
-                  </button>
-                ))}
+                {customCategories!.map((cat) => {
+                  const label = customCategoryLabel(cat, locale);
+                  return (
+                    <button
+                      key={cat.slug}
+                      type="button"
+                      role="tab"
+                      aria-selected={customScenario === cat.slug}
+                      title={label}
+                      className={`scenario-chip scenario-chip--custom${customScenario === cat.slug ? " active" : ""}`}
+                      onClick={() => setCustomScenario(cat.slug)}
+                    >
+                      {label} ({customCategoryCounts[cat.slug] ?? 0})
+                    </button>
+                  );
+                })}
               </>
             ) : (
               <>

@@ -95,15 +95,33 @@ export async function deepseekEnrichResourceUrl(url: string): Promise<ResourceUr
 export type CustomCategory = {
   slug: string;
   labelZh: string;
+  labelEn?: string | null;
 };
 
-/** 让 AI 分析所有资产，生成一组新的 2 字中文分类方案。 */
+/** 让 AI 分析所有资产，生成一组新的中英双语分类方案。 */
 export async function deepseekRegenerateCategories(
   inventory: AgentInventory,
+  locale: "zh" | "en" = "zh",
 ): Promise<CustomCategory[] | null> {
   try {
     return await invoke<CustomCategory[]>("deepseek_regenerate_categories", {
       inventory,
+      locale,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** 为旧的自定义分类补齐当前语言标签（英文模式会补 labelEn）。 */
+export async function deepseekTranslateCustomCategories(
+  categories: CustomCategory[],
+  locale: "zh" | "en",
+): Promise<CustomCategory[] | null> {
+  try {
+    return await invoke<CustomCategory[]>("deepseek_translate_custom_categories", {
+      categories,
+      locale,
     });
   } catch {
     return null;

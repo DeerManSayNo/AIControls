@@ -412,8 +412,18 @@ export default function ResourceLibraryPage() {
             <h2>{locale === "zh" ? "资源库" : "Resource Library"}</h2>
             <span className="count-badge">{library.items.length}</span>
           </div>
-          <button type="button" onClick={openCreate} disabled={saving}>
-            {locale === "zh" ? "+ 新建资源" : "+ New Resource"}
+          <button
+            type="button"
+            className="page-header__primary-action"
+            onClick={openCreate}
+            disabled={saving}
+          >
+            <span className="page-header__primary-action-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span>{locale === "zh" ? "新建资源" : "New Resource"}</span>
           </button>
         </div>
       </div>

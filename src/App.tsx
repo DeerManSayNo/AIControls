@@ -32,6 +32,7 @@ import PromptLibraryPage from "./views/PromptLibraryPage";
 import ResourceLibraryPage from "./views/ResourceLibraryPage";
 import ProjectBoardPage from "./views/ProjectBoardPage";
 import { useI18n } from "./i18n/provider";
+import { listDetectedAgents } from "./api/agents";
 
 function navClass(active: boolean) {
   return `side-nav-link${active ? " active" : ""}`;
@@ -313,12 +314,34 @@ const AGENT_TITLES: Record<string, string> = {
 
 function AgentRoute() {
   const { ecosystem } = useParams();
-  const eco = ecosystem && AGENT_TITLES[ecosystem] ? ecosystem : undefined;
-  const title =
-    ecosystem && AGENT_TITLES[ecosystem]
-      ? AGENT_TITLES[ecosystem]
-      : `Agent: ${ecosystem ?? "-"}`;
-  return <SkillBrowseShell title={title} ecosystem={eco} />;
+  const id = ecosystem?.trim() ?? "";
+  const [title, setTitle] = useState(
+    () => (id && AGENT_TITLES[id] ? AGENT_TITLES[id] : id || "Agent"),
+  );
+
+  useEffect(() => {
+    if (!id) {
+      setTitle("Agent");
+      return;
+    }
+    if (AGENT_TITLES[id]) {
+      setTitle(AGENT_TITLES[id]);
+      return;
+    }
+    let cancelled = false;
+    listDetectedAgents().then((agents) => {
+      if (cancelled) return;
+      const row = agents?.find((a) => a.id === id);
+      setTitle(row?.label ?? id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  return (
+    <SkillBrowseShell title={title} ecosystem={id || undefined} dataSet="skills" />
+  );
 }
 
 function ProjectRoute() {

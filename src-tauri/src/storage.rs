@@ -1,7 +1,7 @@
 //! Local persistence for DeepSeek API key and AI‑assigned asset scenario labels.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
@@ -494,6 +494,183 @@ pub fn clear_gitee_backup_fingerprint(app: &AppHandle) -> Result<(), String> {
     let path = gitee_backup_fingerprint_path(app)?;
     if path.is_file() {
         fs::remove_file(&path).map_err(|e| format!("删除备份指纹失败：{e}"))?;
+    }
+    Ok(())
+}
+
+// --- User-added agent roots (dot-folders like `~/.mytool`) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserAgentEntry {
+    pub id: String,
+    pub path: String,
+    pub label: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct UserAgentsFile {
+    #[serde(default)]
+    agents: Vec<UserAgentEntry>,
+}
+
+fn user_agents_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("user_agents.json"))
+}
+
+pub fn load_user_agents(app: &AppHandle) -> Result<Vec<UserAgentEntry>, String> {
+    let path = user_agents_path(app)?;
+    if !path.is_file() {
+        return Ok(vec![]);
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let file: UserAgentsFile =
+        serde_json::from_str(&text).map_err(|e| format!("读取自定义 Agent 列表失败：{e}"))?;
+    Ok(file.agents)
+}
+
+fn save_user_agents(app: &AppHandle, agents: &[UserAgentEntry]) -> Result<(), String> {
+    let path = user_agents_path(app)?;
+    ensure_parent(&path)?;
+    let file = UserAgentsFile {
+        agents: agents.to_vec(),
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("序列化自定义 Agent 失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入自定义 Agent 失败：{e}"))?;
+    Ok(())
+}
+
+/// Resolve persisted root for ids returned by [`crate::scan::user_agent_stable_id`].
+pub fn user_agent_root_for_id(app: &AppHandle, agent_id: &str) -> Result<Option<PathBuf>, String> {
+    if !agent_id.starts_with("useragent-") {
+        return Ok(None);
+    }
+    let agents = load_user_agents(app)?;
+    Ok(agents
+        .iter()
+        .find(|a| a.id == agent_id)
+        .map(|a| PathBuf::from(a.path.trim())))
+}
+
+/// Add a dot-folder as a custom agent. `path` should be a directory whose name starts with `.`.
+pub fn add_user_agent_from_path(app: &AppHandle, path: &str) -> Result<UserAgentEntry, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空".into());
+    }
+    let p = Path::new(trimmed);
+    let can = p
+        .canonicalize()
+        .map_err(|e| format!("无法解析所选路径：{e}"))?;
+    if !can.is_dir() {
+        return Err("所选路径不是文件夹".into());
+    }
+    let name = can
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "无法读取文件夹名称".to_string())?;
+    if !name.starts_with('.') {
+        return Err("请选择以「.」开头的配置目录（例如 .cursor、.myagent）。".into());
+    }
+
+    let mut agents = load_user_agents(app)?;
+    let can_s = can.to_string_lossy().to_string();
+    for a in &agents {
+        if a.path == can_s {
+            return Err("该目录已在自定义 Agent 列表中。".into());
+        }
+    }
+
+    let builtins = crate::scan::detect_agents();
+    for b in &builtins {
+        if Path::new(&b.root_path).canonicalize().map(|x| x == can).unwrap_or(false) {
+            return Err("该目录已由内置 Agent 识别，无需重复添加。".into());
+        }
+    }
+
+    let id = crate::scan::user_agent_stable_id(&can);
+    let label = name
+        .strip_prefix('.')
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
+        .to_string();
+    let entry = UserAgentEntry {
+        id,
+        path: can_s,
+        label,
+    };
+    agents.push(entry.clone());
+    save_user_agents(app, &agents)?;
+    Ok(entry)
+}
+
+pub fn remove_user_agent(app: &AppHandle, agent_id: &str) -> Result<(), String> {
+    if !agent_id.starts_with("useragent-") {
+        return Err("只能移除自定义 Agent".into());
+    }
+    let mut agents = load_user_agents(app)?;
+    let before = agents.len();
+    agents.retain(|a| a.id != agent_id);
+    if agents.len() == before {
+        return Err("未找到该自定义 Agent".into());
+    }
+    save_user_agents(app, &agents)
+}
+
+// --- Hidden built-in agents (removed from sidebar only; scan / disk unchanged) ---
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct HiddenSidebarAgentsFile {
+    #[serde(default)]
+    hidden_ids: Vec<String>,
+}
+
+fn hidden_sidebar_agents_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("hidden_sidebar_agent_ids.json"))
+}
+
+pub fn load_hidden_sidebar_agent_ids(app: &AppHandle) -> Result<HashSet<String>, String> {
+    let path = hidden_sidebar_agents_path(app)?;
+    if !path.is_file() {
+        return Ok(HashSet::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let file: HiddenSidebarAgentsFile =
+        serde_json::from_str(&text).map_err(|e| format!("读取侧栏隐藏 Agent 列表失败：{e}"))?;
+    Ok(file.hidden_ids.into_iter().map(|s| s.trim().to_string()).collect())
+}
+
+fn save_hidden_sidebar_agent_ids(app: &AppHandle, ids: &HashSet<String>) -> Result<(), String> {
+    let path = hidden_sidebar_agents_path(app)?;
+    ensure_parent(&path)?;
+    let mut v: Vec<String> = ids.iter().cloned().collect();
+    v.sort();
+    let file = HiddenSidebarAgentsFile { hidden_ids: v };
+    let json =
+        serde_json::to_string_pretty(&file).map_err(|e| format!("序列化侧栏隐藏列表失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入侧栏隐藏列表失败：{e}"))?;
+    Ok(())
+}
+
+/// Hide a built-in agent (`cursor`, `claude`, …) from the sidebar list only.
+pub fn hide_sidebar_builtin_agent(app: &AppHandle, agent_id: &str) -> Result<(), String> {
+    let id = agent_id.trim();
+    if id.is_empty() {
+        return Err("agent_id 不能为空".into());
+    }
+    if id.starts_with("useragent-") {
+        return Err("自定义 Agent 请使用 remove_user_agent".into());
+    }
+    let mut set = load_hidden_sidebar_agent_ids(app)?;
+    set.insert(id.to_string());
+    save_hidden_sidebar_agent_ids(app, &set)
+}
+
+/// Clear all hidden built-in agents so the sidebar shows the full auto-detected list again.
+pub fn clear_hidden_sidebar_agents(app: &AppHandle) -> Result<(), String> {
+    let path = hidden_sidebar_agents_path(app)?;
+    if path.is_file() {
+        fs::remove_file(&path).map_err(|e| format!("清除侧栏隐藏列表失败：{e}"))?;
     }
     Ok(())
 }

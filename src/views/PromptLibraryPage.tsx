@@ -4,6 +4,7 @@ import {
   convertPromptToMySkill,
   getPromptLibrary,
   savePromptLibrary,
+  type PromptFolder,
   type PromptItem,
   type PromptLibraryFile,
   type PromptType,
@@ -25,6 +26,8 @@ const TYPE_LABEL_EN: Record<PromptType, string> = {
   text: "Text",
 };
 
+const PROMPT_TYPES = Object.keys(TYPE_META) as PromptType[];
+
 type Toast = { message: string; kind: "success" | "error" };
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -36,12 +39,17 @@ function emptyLibrary(): PromptLibraryFile {
 
 function ensureRootFolders(lib: PromptLibraryFile): PromptLibraryFile {
   const next = { ...lib, folders: [...lib.folders] };
-  for (const t of Object.keys(TYPE_META) as PromptType[]) {
+  for (const t of PROMPT_TYPES) {
     if (!next.folders.some((f) => f.id === t)) {
       next.folders.push({ id: t, name: TYPE_META[t].rootName, parentId: null });
     }
   }
   return next;
+}
+
+function isFolderInType(folderId: string, type: PromptType, folders: PromptFolder[]): boolean {
+  if (folderId === type) return true;
+  return folders.some((folder) => folder.id === folderId && folder.parentId === type);
 }
 
 function slugifyCommandName(input: string): string {
@@ -121,8 +129,18 @@ export default function PromptLibraryPage() {
     itemId: string;
     skillName: string;
   } | null>(null);
+  const [groupPicker, setGroupPicker] = useState<{
+    itemId: string;
+  } | null>(null);
+  /** Tauri WebView 中 window.prompt 不可用，用模态框输入组名 */
+  const [groupNameModal, setGroupNameModal] = useState<{
+    promptType: PromptType;
+    assignItemId: string | null;
+  } | null>(null);
+  const [newGroupNameDraft, setNewGroupNameDraft] = useState("");
   const cardContextMenuRef = useRef<HTMLDivElement>(null);
   const createTitleInputRef = useRef<HTMLInputElement>(null);
+  const newGroupNameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +227,28 @@ export default function PromptLibraryPage() {
     return ids;
   }, [activeFolderId, library.folders]);
 
+  const activeGroups = useMemo(
+    () =>
+      library.folders
+        .filter((folder) => folder.parentId === activeType)
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [activeType, library.folders],
+  );
+
+  const activeTypeItemCount = useMemo(
+    () => library.items.filter((item) => item.type === activeType).length,
+    [activeType, library.items],
+  );
+
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of library.items) {
+      counts.set(item.folderId, (counts.get(item.folderId) ?? 0) + 1);
+    }
+    return counts;
+  }, [library.items]);
+
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
     return library.items
@@ -246,6 +286,81 @@ export default function PromptLibraryPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function groupNameExists(type: PromptType, name: string): boolean {
+    const normalized = name.trim().toLowerCase();
+    return library.folders.some(
+      (folder) => folder.parentId === type && folder.name.trim().toLowerCase() === normalized,
+    );
+  }
+
+  function openNewGroupModal(type: PromptType, assignItemId: string | null) {
+    setGroupNameModal({ promptType: type, assignItemId });
+    setNewGroupNameDraft("");
+  }
+
+  async function confirmNewGroup() {
+    if (!groupNameModal) return;
+    const name = newGroupNameDraft.trim();
+    if (!name) {
+      setToast({ kind: "error", message: locale === "zh" ? "请填写组名" : "Please enter a group name" });
+      return;
+    }
+    const { promptType: type, assignItemId } = groupNameModal;
+    if (groupNameExists(type, name)) {
+      setToast({ kind: "error", message: locale === "zh" ? "同名组已存在" : "A group with this name already exists" });
+      return;
+    }
+    const group: PromptFolder = {
+      id: `group-${crypto.randomUUID()}`,
+      name,
+      parentId: type,
+    };
+    try {
+      if (assignItemId) {
+        const next = {
+          ...library,
+          folders: [...library.folders, group],
+          items: library.items.map((x) =>
+            x.id === assignItemId ? { ...x, folderId: group.id, updatedAt: Date.now() } : x,
+          ),
+        };
+        await persist(next);
+        setToast({
+          kind: "success",
+          message: locale === "zh" ? "已创建组并添加" : "Group created and item added",
+        });
+      } else {
+        const next = { ...library, folders: [...library.folders, group] };
+        await persist(next);
+        setToast({ kind: "success", message: locale === "zh" ? "组已创建" : "Group created" });
+      }
+      setGroupNameModal(null);
+      setNewGroupNameDraft("");
+      setActiveType(type);
+      setActiveFolderId(group.id);
+    } catch {
+      /* persist 已 setErr */
+    }
+  }
+
+  async function assignItemToGroup(item: PromptItem, folderId: string) {
+    if (!isFolderInType(folderId, item.type, library.folders)) {
+      setToast({ kind: "error", message: locale === "zh" ? "组不存在或类型不匹配" : "Group does not exist or type mismatch" });
+      return;
+    }
+    const next = {
+      ...library,
+      items: library.items.map((x) =>
+        x.id === item.id ? { ...x, folderId, updatedAt: Date.now() } : x,
+      ),
+    };
+    await persist(next);
+    setGroupPicker(null);
+    setActiveType(item.type);
+    setActiveFolderId(folderId);
+    setToast({ kind: "success", message: locale === "zh" ? "已添加到组" : "Added to group" });
   }
 
   function resetCreateState() {
@@ -309,6 +424,27 @@ export default function PromptLibraryPage() {
     return () => window.cancelAnimationFrame(id);
   }, [showCreate]);
 
+  useEffect(() => {
+    if (!groupNameModal) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setGroupNameModal(null);
+        setNewGroupNameDraft("");
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const id = window.requestAnimationFrame(() => {
+      newGroupNameInputRef.current?.focus();
+    });
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+      window.cancelAnimationFrame(id);
+    };
+  }, [groupNameModal]);
+
   async function onSubmitEditor() {
     const title = newItem.title.trim();
     const prompt = newItem.prompt.trim();
@@ -330,24 +466,16 @@ export default function PromptLibraryPage() {
       closeCreateModal();
       return;
     }
-    if (outputType === "image") {
-      const imageUrl = newOutputImageDataUrl ?? (prev?.type === "image" ? (prev.imageDataUrl ?? null) : null);
-      if (!imageUrl) {
-        setToast({ kind: "error", message: locale === "zh" ? "请先粘贴图片输出示例" : "Please paste an image output example first" });
-        return;
-      }
-    }
-    if (outputType !== "image" && !outputExample) {
-      setToast({ kind: "error", message: locale === "zh" ? "请先粘贴输出示例内容" : "Please paste output example first" });
-      return;
-    }
-
     const now = Date.now();
     if (editingItemId !== null && prev) {
       const imageDataUrl =
         outputType === "image"
           ? (newOutputImageDataUrl ?? (prev.imageDataUrl ?? null))
           : null;
+      const nextFolderId =
+        prev.type === outputType && isFolderInType(prev.folderId, outputType, library.folders)
+          ? prev.folderId
+          : outputType;
       const updated: PromptItem = {
         ...prev,
         type: outputType,
@@ -357,7 +485,7 @@ export default function PromptLibraryPage() {
         outputExample: outputType === "image" ? "" : outputExample,
         relatedLink: relatedLink || null,
         imageDataUrl,
-        folderId: outputType,
+        folderId: nextFolderId,
         updatedAt: now,
       };
       const next = {
@@ -367,11 +495,15 @@ export default function PromptLibraryPage() {
       await persist(next);
       closeCreateModal();
       setActiveType(outputType);
-      setActiveFolderId(outputType);
+      setActiveFolderId(nextFolderId);
       setToast({ kind: "success", message: locale === "zh" ? "已保存修改" : "Changes saved" });
       return;
     }
 
+    const newFolderId =
+      activeType === outputType && isFolderInType(activeFolderId, outputType, library.folders)
+        ? activeFolderId
+        : outputType;
     const item: PromptItem = {
       id: crypto.randomUUID(),
       type: outputType,
@@ -383,7 +515,7 @@ export default function PromptLibraryPage() {
       imageDataUrl: outputType === "image" ? newOutputImageDataUrl : null,
       tags: [],
       note: "",
-      folderId: outputType,
+      folderId: newFolderId,
       createdAt: now,
       updatedAt: now,
     };
@@ -391,7 +523,7 @@ export default function PromptLibraryPage() {
     await persist(next);
     closeCreateModal();
     setActiveType(outputType);
-    setActiveFolderId(outputType);
+    setActiveFolderId(newFolderId);
     setToast({ kind: "success", message: locale === "zh" ? "已保存" : "Saved" });
   }
 
@@ -621,44 +753,87 @@ export default function PromptLibraryPage() {
             <h2>{locale === "zh" ? "Prompt 库" : "Prompt Library"}</h2>
             <span className="count-badge">{library.items.length}</span>
           </div>
-          <button onClick={openCreateModal} disabled={loading || saving}>
-            {locale === "zh" ? "+ 新建收藏" : "+ New Item"}
+          <button
+            type="button"
+            className="page-header__primary-action"
+            onClick={openCreateModal}
+            disabled={loading || saving}
+          >
+            <span className="page-header__primary-action-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span>{locale === "zh" ? "新建收藏" : "New Item"}</span>
           </button>
         </div>
       </div>
 
-      <div className="toolbar">
-        <div className="toolbar__left">
-          <div className="seg" role="tablist" aria-label={locale === "zh" ? "Prompt 类型" : "Prompt type"}>
-            {(Object.keys(TYPE_META) as PromptType[]).map((t) => (
+      <div className="toolbar prompt-lib__toolbar">
+        <div className="toolbar__left prompt-lib__toolbar-left">
+          <div className="prompt-lib__toolbar-main">
+            <div className="seg" role="tablist" aria-label={locale === "zh" ? "Prompt 类型" : "Prompt type"}>
+              {PROMPT_TYPES.map((t) => (
+                <button
+                  key={t}
+                  className={`seg__item${activeType === t ? " active" : ""}`}
+                  onClick={() => switchType(t)}
+                >
+                  {typeLabel(t)}
+                </button>
+              ))}
+            </div>
+            <label className="search">
+              <span className="search__icon" aria-hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15zM16.5 16.5L21 21"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+              <input
+                className="search__input"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={locale === "zh" ? "搜索标题 / Prompt / 输出示例" : "Search title / prompt / output example"}
+              />
+            </label>
+          </div>
+
+          <div className="prompt-lib__group-bar" role="tablist" aria-label={locale === "zh" ? "Prompt 组" : "Prompt groups"}>
+            <button
+              type="button"
+              className={`prompt-lib__group-chip${activeFolderId === activeType ? " is-active" : ""}`}
+              onClick={() => setActiveFolderId(activeType)}
+            >
+              <span>{locale === "zh" ? "全部" : "All"}</span>
+              <span className="prompt-lib__group-count">{activeTypeItemCount}</span>
+            </button>
+            {activeGroups.map((group) => (
               <button
-                key={t}
-                className={`seg__item${activeType === t ? " active" : ""}`}
-                onClick={() => switchType(t)}
+                key={group.id}
+                type="button"
+                className={`prompt-lib__group-chip${activeFolderId === group.id ? " is-active" : ""}`}
+                onClick={() => setActiveFolderId(group.id)}
+                title={group.name}
               >
-                {typeLabel(t)}
+                <span className="prompt-lib__group-name">{group.name}</span>
+                <span className="prompt-lib__group-count">{groupCounts.get(group.id) ?? 0}</span>
               </button>
             ))}
+            <button
+              type="button"
+              className="prompt-lib__group-chip prompt-lib__group-chip--add"
+              disabled={loading || saving}
+              onClick={() => openNewGroupModal(activeType, null)}
+            >
+              {locale === "zh" ? "+ 新建组" : "+ New group"}
+            </button>
           </div>
-          <label className="search">
-            <span className="search__icon" aria-hidden>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15zM16.5 16.5L21 21"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </span>
-            <input
-              className="search__input"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={locale === "zh" ? "搜索标题 / Prompt / 输出示例" : "Search title / prompt / output example"}
-            />
-          </label>
         </div>
       </div>
 
@@ -678,7 +853,23 @@ export default function PromptLibraryPage() {
                       className={`prompt-lib__masonry-card${item.type === "image" ? "" : " prompt-lib__masonry-card--text-output"}`}
                       onContextMenu={(e) => onMasonryCardContextMenu(e, item)}
                     >
-                      <MasonryCardOutput item={item} locale={locale} />
+                      <div
+                        className="prompt-lib__masonry-preview-hit"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={locale === "zh" ? "编辑此收藏" : "Edit this item"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!loading && !saving) openEditModal(item);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          e.preventDefault();
+                          if (!loading && !saving) openEditModal(item);
+                        }}
+                      >
+                        <MasonryCardOutput item={item} locale={locale} />
+                      </div>
                       <div className="prompt-lib__masonry-body">
                         <div className="prompt-lib__masonry-main">
                           <h3 className="prompt-lib__masonry-title" title={item.title}>
@@ -800,7 +991,7 @@ export default function PromptLibraryPage() {
                           role="radiogroup"
                           aria-labelledby="pcm-output-type-label"
                         >
-                          {(Object.keys(TYPE_META) as PromptType[]).map((t) => (
+                          {PROMPT_TYPES.map((t) => (
                             <button
                               key={t}
                               type="button"
@@ -862,7 +1053,10 @@ export default function PromptLibraryPage() {
                     {newItem.outputType === "image" ? (
                       <div className="prompt-create-modal__field">
                         <span className="prompt-create-modal__label" id="pcm-image-example-label">
-                          {locale === "zh" ? "输出示例（图片）" : "Output example (image)"}
+                          {locale === "zh" ? "输出示例（图片）" : "Output example (image)"}{" "}
+                          <span className="prompt-create-modal__label-optional">
+                            {locale === "zh" ? "选填" : "optional"}
+                          </span>
                         </span>
                         <div
                           className={`prompt-create-modal__paste-board${
@@ -900,7 +1094,12 @@ export default function PromptLibraryPage() {
                       </div>
                     ) : (
                       <label className="prompt-create-modal__field" htmlFor="pcm-output-example">
-                        <span className="prompt-create-modal__label">{locale === "zh" ? "输出示例" : "Output example"}</span>
+                        <span className="prompt-create-modal__label">
+                          {locale === "zh" ? "输出示例" : "Output example"}{" "}
+                          <span className="prompt-create-modal__label-optional">
+                            {locale === "zh" ? "选填" : "optional"}
+                          </span>
+                        </span>
                         <textarea
                           id="pcm-output-example"
                           className="prompt-create-modal__textarea"
@@ -989,6 +1188,19 @@ export default function PromptLibraryPage() {
                 }}
               >
                 {locale === "zh" ? "编辑" : "Edit"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                disabled={saving}
+                onClick={() => {
+                  const item = cardContextMenu.item;
+                  setCardContextMenu(null);
+                  setGroupPicker({ itemId: item.id });
+                }}
+              >
+                {locale === "zh" ? "添加到组…" : "Add to group..."}
               </button>
               <button
                 type="button"
@@ -1110,6 +1322,217 @@ export default function PromptLibraryPage() {
               >
                 {locale === "zh" ? "删除" : "Delete"}
               </button>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {groupPicker
+        ? (() => {
+            const item = library.items.find((x) => x.id === groupPicker.itemId);
+            if (!item) return null;
+            const groups = library.folders
+              .filter((folder) => folder.parentId === item.type)
+              .slice()
+              .sort((a, b) => a.name.localeCompare(b.name));
+            return createPortal(
+              <div className="prompt-create-modal-root">
+                <div
+                  className="prompt-create-modal-backdrop"
+                  onClick={() => setGroupPicker(null)}
+                  aria-hidden
+                />
+                <div
+                  className="prompt-create-modal prompt-command-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="prompt-group-picker-title"
+                >
+                  <header className="prompt-create-modal__header">
+                    <div className="prompt-create-modal__header-text">
+                      <h2 id="prompt-group-picker-title" className="prompt-create-modal__title">
+                        {locale === "zh" ? "添加到组" : "Add to group"}
+                      </h2>
+                      <p className="prompt-create-modal__subtitle">
+                        {locale === "zh"
+                          ? `为「${item.title}」选择一个${typeLabel(item.type)}组。`
+                          : `Choose a ${typeLabel(item.type)} group for "${item.title}".`}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="prompt-create-modal__close"
+                      onClick={() => setGroupPicker(null)}
+                      aria-label={locale === "zh" ? "关闭" : "Close"}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                        <path
+                          d="M6 6l12 12M18 6L6 18"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </button>
+                  </header>
+                  <div className="prompt-create-modal__body">
+                    <div className="prompt-lib__group-picker">
+                      <button
+                        type="button"
+                        className={`prompt-lib__group-picker-item${
+                          item.folderId === item.type ? " is-active" : ""
+                        }`}
+                        disabled={saving}
+                        onClick={() => void assignItemToGroup(item, item.type)}
+                      >
+                        <span>{locale === "zh" ? "全部（不放入组）" : "All (no group)"}</span>
+                        <span className="prompt-lib__group-count">
+                          {library.items.filter((x) => x.type === item.type && x.folderId === item.type).length}
+                        </span>
+                      </button>
+                      {groups.map((group) => (
+                        <button
+                          key={group.id}
+                          type="button"
+                          className={`prompt-lib__group-picker-item${
+                            item.folderId === group.id ? " is-active" : ""
+                          }`}
+                          disabled={saving}
+                          onClick={() => void assignItemToGroup(item, group.id)}
+                        >
+                          <span>{group.name}</span>
+                          <span className="prompt-lib__group-count">{groupCounts.get(group.id) ?? 0}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <footer className="prompt-create-modal__footer">
+                    <button
+                      type="button"
+                      className="prompt-create-modal__cancel"
+                      onClick={() => setGroupPicker(null)}
+                      disabled={saving}
+                    >
+                      {locale === "zh" ? "取消" : "Cancel"}
+                    </button>
+                    <button
+                      type="button"
+                      className="prompt-create-modal__submit"
+                      onClick={() => {
+                        setGroupPicker(null);
+                        openNewGroupModal(item.type, item.id);
+                      }}
+                      disabled={saving}
+                    >
+                      {locale === "zh" ? "+ 新建组并添加" : "+ New group and add"}
+                    </button>
+                  </footer>
+                </div>
+              </div>,
+              document.body,
+            );
+          })()
+        : null}
+
+      {groupNameModal
+        ? createPortal(
+            <div className="prompt-create-modal-root">
+              <div
+                className="prompt-create-modal-backdrop"
+                onClick={() => {
+                  setGroupNameModal(null);
+                  setNewGroupNameDraft("");
+                }}
+                aria-hidden
+              />
+              <div
+                className="prompt-create-modal prompt-command-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="prompt-new-group-title"
+              >
+                <header className="prompt-create-modal__header">
+                  <div className="prompt-create-modal__header-text">
+                    <h2 id="prompt-new-group-title" className="prompt-create-modal__title">
+                      {locale === "zh" ? "新建组" : "New group"}
+                    </h2>
+                    <p className="prompt-create-modal__subtitle">
+                      {groupNameModal.assignItemId
+                        ? locale === "zh"
+                          ? `在「${typeLabel(groupNameModal.promptType)}」下创建，并将当前卡片加入该组。`
+                          : `Create under ${typeLabel(groupNameModal.promptType)} and add the selected item.`
+                        : locale === "zh"
+                          ? `组将出现在「${typeLabel(groupNameModal.promptType)}」分类下。`
+                          : `The group appears under ${typeLabel(groupNameModal.promptType)}.`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="prompt-create-modal__close"
+                    onClick={() => {
+                      setGroupNameModal(null);
+                      setNewGroupNameDraft("");
+                    }}
+                    aria-label={locale === "zh" ? "关闭" : "Close"}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                      <path
+                        d="M6 6l12 12M18 6L6 18"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </header>
+                <form
+                  className="prompt-create-modal__form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void confirmNewGroup();
+                  }}
+                >
+                  <div className="prompt-create-modal__body">
+                    <label className="prompt-create-modal__field" htmlFor="prompt-new-group-name">
+                      <span className="prompt-create-modal__label">
+                        {locale === "zh" ? "组名" : "Group name"}
+                      </span>
+                      <input
+                        ref={newGroupNameInputRef}
+                        id="prompt-new-group-name"
+                        className="prompt-create-modal__input"
+                        value={newGroupNameDraft}
+                        onChange={(e) => setNewGroupNameDraft(e.target.value)}
+                        placeholder={locale === "zh" ? "例如：工作流 / 海报" : "e.g. workflow / posters"}
+                        autoComplete="off"
+                      />
+                    </label>
+                  </div>
+                  <footer className="prompt-create-modal__footer">
+                    <span className="prompt-create-modal__kbd-hint">
+                      {locale === "zh" ? "Esc 关闭" : "Esc to close"}
+                    </span>
+                    <div className="prompt-create-modal__actions">
+                      <button
+                        type="button"
+                        className="prompt-create-modal__cancel"
+                        onClick={() => {
+                          setGroupNameModal(null);
+                          setNewGroupNameDraft("");
+                        }}
+                        disabled={saving}
+                      >
+                        {locale === "zh" ? "取消" : "Cancel"}
+                      </button>
+                      <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
+                        {locale === "zh" ? "创建" : "Create"}
+                      </button>
+                    </div>
+                  </footer>
+                </form>
+              </div>
             </div>,
             document.body,
           )
@@ -1367,11 +1790,13 @@ function MasonryCardOutput({ item, locale }: { item: PromptItem; locale: "zh" | 
       <div className="prompt-lib__masonry-fallback">{locale === "zh" ? "暂无图片" : "No image"}</div>
     );
   }
-  const raw = (item.outputExample ?? "").trim();
+  const example = (item.outputExample ?? "").trim();
+  const promptBody = (item.prompt ?? "").trim();
+  const raw = example || promptBody;
   if (!raw) {
     return (
       <div className="prompt-lib__masonry-fallback">
-        {locale === "zh" ? "暂无输出示例" : "No output example"}
+        {locale === "zh" ? "暂无 Prompt 与输出示例" : "No prompt or output example"}
       </div>
     );
   }

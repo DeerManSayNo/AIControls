@@ -4,6 +4,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use tauri::AppHandle;
+
 use crate::scan::{extract_skill_declared_name, skills_container_dir};
 
 fn home_dir_buf() -> PathBuf {
@@ -27,6 +29,19 @@ pub fn global_skill_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> 
         "kiro" => vec![home.join(".kiro/skills")],
         _ => return Err(format!("未知 agent: {agent_id}")),
     })
+}
+
+/// Global `skills` parent dirs: built-in agents or a single `…/skills` under a user-added root.
+pub fn resolve_global_skill_buckets(
+    app: Option<&AppHandle>,
+    agent_id: &str,
+) -> Result<Vec<PathBuf>, String> {
+    if let Some(app_handle) = app {
+        if let Ok(Some(root)) = crate::storage::user_agent_root_for_id(app_handle, agent_id) {
+            return Ok(vec![root.join("skills")]);
+        }
+    }
+    global_skill_parent_dirs(agent_id)
 }
 
 /// e.g. `<project>/.cursor/skills` → marker `<project>/.cursor`
@@ -364,10 +379,11 @@ fn resolve_dest_parent(
     agent_id: &str,
     bucket_index: usize,
     project_root: Option<&Path>,
+    app: Option<&AppHandle>,
 ) -> Result<PathBuf, String> {
     let dest_parent = match kind {
         "global" => {
-            let buckets = global_skill_parent_dirs(agent_id)?;
+            let buckets = resolve_global_skill_buckets(app, agent_id)?;
             buckets
                 .get(bucket_index)
                 .cloned()
@@ -387,26 +403,8 @@ fn resolve_dest_parent(
 }
 
 /// `on_conflict_suffix`: true → `name`, `name-2`, … ; false → error if exists.
-pub fn perform_copy(
-    source_path: &str,
-    kind: &str,
-    agent_id: &str,
-    bucket_index: usize,
-    project_root: Option<&str>,
-    on_conflict_suffix: bool,
-) -> Result<String, String> {
-    perform_copy_with_options(
-        source_path,
-        kind,
-        agent_id,
-        bucket_index,
-        project_root,
-        on_conflict_suffix,
-        None,
-    )
-}
-
 pub fn perform_copy_with_options(
+    app: Option<&AppHandle>,
     source_path: &str,
     kind: &str,
     agent_id: &str,
@@ -416,7 +414,7 @@ pub fn perform_copy_with_options(
     folder_name_prefix: Option<&str>,
 ) -> Result<String, String> {
     let root_path = project_root.map(Path::new);
-    let dest_parent_uncanon = resolve_dest_parent(kind, agent_id, bucket_index, root_path)?;
+    let dest_parent_uncanon = resolve_dest_parent(kind, agent_id, bucket_index, root_path, app)?;
     let guard = if kind == "project" { root_path } else { None };
     let final_dir = copy_skill_package_into_parent_with_options(
         &dest_parent_uncanon,
