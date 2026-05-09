@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  convertPromptToMySkill,
   getPromptLibrary,
   savePromptLibrary,
   type PromptItem,
@@ -26,6 +27,7 @@ const TYPE_LABEL_EN: Record<PromptType, string> = {
 type Toast = { message: string; kind: "success" | "error" };
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const COMMAND_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function emptyLibrary(): PromptLibraryFile {
   return { version: 1, folders: [], items: [] };
@@ -39,6 +41,25 @@ function ensureRootFolders(lib: PromptLibraryFile): PromptLibraryFile {
     }
   }
   return next;
+}
+
+function slugifyCommandName(input: string): string {
+  const out = input
+    .trim()
+    .toLowerCase()
+    .replace(/^\/?cp-/, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  return out || "prompt";
+}
+
+function commandNameForItem(item: PromptItem): string {
+  return slugifyCommandName(item.commandName || item.title);
+}
+
+function displayPromptCommand(commandName: string): string {
+  return `/cp-${commandName}`;
 }
 
 export default function PromptLibraryPage() {
@@ -69,12 +90,23 @@ export default function PromptLibraryPage() {
     y: number;
     item: PromptItem;
   } | null>(null);
+  const [commandEditor, setCommandEditor] = useState<{
+    itemId: string;
+    commandName: string;
+  } | null>(null);
+  const [skillConvertEditor, setSkillConvertEditor] = useState<{
+    itemId: string;
+    skillName: string;
+  } | null>(null);
   const cardContextMenuRef = useRef<HTMLDivElement>(null);
   const createTitleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let frameId: number | null = null;
+    let timerId: number | null = null;
+
+    const loadPromptLibrary = async () => {
       try {
         setLoading(true);
         const lib = ensureRootFolders(await getPromptLibrary());
@@ -87,9 +119,18 @@ export default function PromptLibraryPage() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
+
+    frameId = window.requestAnimationFrame(() => {
+      timerId = window.setTimeout(() => {
+        void loadPromptLibrary();
+      }, 0);
+    });
+
     return () => {
       cancelled = true;
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      if (timerId !== null) window.clearTimeout(timerId);
     };
   }, []);
 
@@ -141,6 +182,7 @@ export default function PromptLibraryPage() {
         return (
           item.title.toLowerCase().includes(q) ||
           item.prompt.toLowerCase().includes(q) ||
+          (item.commandName ? displayPromptCommand(item.commandName).toLowerCase().includes(q) : false) ||
           (item.outputExample ?? "").toLowerCase().includes(q)
         );
       })
@@ -357,6 +399,129 @@ export default function PromptLibraryPage() {
     }
   }
 
+  async function copyPromptCommand(commandName: string) {
+    try {
+      await navigator.clipboard.writeText(displayPromptCommand(commandName));
+      setToast({ kind: "success", message: locale === "zh" ? "已复制 /cp 命令" : "/cp command copied" });
+    } catch {
+      setToast({ kind: "error", message: locale === "zh" ? "复制失败" : "Copy failed" });
+    }
+  }
+
+  function commandNameExists(name: string, exceptId: string): boolean {
+    return library.items.some(
+      (item) =>
+        item.id !== exceptId &&
+        item.commandEnabled &&
+        (item.commandName ?? "").trim() === name,
+    );
+  }
+
+  function openPromptCommandEditor(item: PromptItem) {
+    if (!item.prompt.trim()) {
+      setToast({ kind: "error", message: locale === "zh" ? "请先填写 Prompt" : "Please add prompt content first" });
+      return;
+    }
+    setCommandEditor({
+      itemId: item.id,
+      commandName: commandNameForItem(item),
+    });
+  }
+
+  async function publishPromptCommand(item: PromptItem, rawName: string) {
+    const commandName = slugifyCommandName(rawName);
+    if (!COMMAND_NAME_RE.test(commandName)) {
+      setToast({ kind: "error", message: locale === "zh" ? "命令名只能包含小写字母、数字和短横线" : "Use lowercase letters, numbers, and hyphens only" });
+      return;
+    }
+    if (commandNameExists(commandName, item.id)) {
+      setToast({ kind: "error", message: locale === "zh" ? "该 /cp 命令名已被占用" : "This /cp command is already used" });
+      return;
+    }
+    const now = Date.now();
+    const next = {
+      ...library,
+      items: library.items.map((x) =>
+        x.id === item.id
+          ? { ...x, commandName, commandEnabled: true, updatedAt: now }
+          : x,
+      ),
+    };
+    await persist(next);
+    setCommandEditor(null);
+    setToast({ kind: "success", message: `${locale === "zh" ? "已发布" : "Published"} ${displayPromptCommand(commandName)}` });
+  }
+
+  async function unpublishPromptCommand(item: PromptItem) {
+    const next = {
+      ...library,
+      items: library.items.map((x) =>
+        x.id === item.id ? { ...x, commandEnabled: false, updatedAt: Date.now() } : x,
+      ),
+    };
+    await persist(next);
+    setToast({ kind: "success", message: locale === "zh" ? "已取消 /cp 发布" : "/cp command unpublished" });
+  }
+
+  function openSkillConvertEditor(item: PromptItem) {
+    if (!item.prompt.trim()) {
+      setToast({ kind: "error", message: locale === "zh" ? "请先填写 Prompt" : "Please add prompt content first" });
+      return;
+    }
+    if (item.convertedSkillId) {
+      const ok = window.confirm(
+        locale === "zh"
+          ? "这条 Prompt 已转过 Skill，是否继续创建一个新的 Skill？"
+          : "This prompt was already converted. Create another skill?",
+      );
+      if (!ok) return;
+    }
+    setSkillConvertEditor({
+      itemId: item.id,
+      skillName: commandNameForItem(item),
+    });
+  }
+
+  async function convertPromptItemToSkill(item: PromptItem, rawSkillName: string) {
+    const skillName = slugifyCommandName(rawSkillName);
+    if (!COMMAND_NAME_RE.test(skillName)) {
+      setToast({ kind: "error", message: locale === "zh" ? "Skill 名只能包含小写字母、数字和短横线" : "Use lowercase letters, numbers, and hyphens only" });
+      return;
+    }
+    try {
+      setSaving(true);
+      const skill = await convertPromptToMySkill({
+        title: item.title,
+        prompt: item.prompt,
+        outputType: item.outputType ?? item.type,
+        outputExample: item.outputExample ?? "",
+        commandName: skillName,
+      });
+      const next = {
+        ...library,
+        items: library.items.map((x) =>
+          x.id === item.id
+            ? { ...x, convertedSkillId: skill.id, updatedAt: Date.now() }
+            : x,
+        ),
+      };
+      await savePromptLibrary(next);
+      setLibrary(next);
+      setErr(null);
+      setSkillConvertEditor(null);
+      setToast({
+        kind: "success",
+        message: locale === "zh" ? "已转为 Skill，可在我的 Skills 中同步" : "Converted to Skill. Sync it from My Skills.",
+      });
+    } catch (e) {
+      const msg = String(e);
+      setErr(msg);
+      setToast({ kind: "error", message: msg });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function switchType(t: PromptType) {
     setActiveType(t);
     setActiveFolderId(t);
@@ -411,8 +576,6 @@ export default function PromptLibraryPage() {
     }
   }
 
-  if (loading) return <p className="muted">{locale === "zh" ? "正在加载 Prompt 库…" : "Loading prompt library…"}</p>;
-
   return (
     <div className="prompt-lib">
       <div className="page-header">
@@ -421,7 +584,7 @@ export default function PromptLibraryPage() {
             <h2>{locale === "zh" ? "Prompt 库" : "Prompt Library"}</h2>
             <span className="count-badge">{library.items.length}</span>
           </div>
-          <button onClick={openCreateModal} disabled={saving}>
+          <button onClick={openCreateModal} disabled={loading || saving}>
             {locale === "zh" ? "+ 新建收藏" : "+ New Item"}
           </button>
         </div>
@@ -464,7 +627,9 @@ export default function PromptLibraryPage() {
 
       <div className="prompt-lib__layout">
         <section className="prompt-lib__browse">
-          {filteredItems.length === 0 ? (
+          {loading ? (
+            <p className="muted">{locale === "zh" ? "正在加载 Prompt 库…" : "Loading prompt library…"}</p>
+          ) : filteredItems.length === 0 ? (
             <p className="muted">{locale === "zh" ? "当前分类暂无收藏" : "No items in this category"}</p>
           ) : (
             <div className="prompt-lib__masonry">
@@ -478,9 +643,12 @@ export default function PromptLibraryPage() {
                     >
                       <MasonryCardOutput item={item} locale={locale} />
                       <div className="prompt-lib__masonry-body">
-                        <h3 className="prompt-lib__masonry-title" title={item.title}>
-                          {item.title}
-                        </h3>
+                        <div className="prompt-lib__masonry-main">
+                          <h3 className="prompt-lib__masonry-title" title={item.title}>
+                            {item.title}
+                          </h3>
+                          <PromptPublishBadges item={item} locale={locale} />
+                        </div>
                         <button
                           type="button"
                           className="prompt-lib__masonry-copy"
@@ -809,6 +977,74 @@ export default function PromptLibraryPage() {
                     ? "复制 Prompt"
                     : "Copy prompt"}
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                disabled={saving}
+                onClick={() => {
+                  const item = cardContextMenu.item;
+                  setCardContextMenu(null);
+                  openPromptCommandEditor(item);
+                }}
+              >
+                {cardContextMenu.item.commandEnabled
+                  ? locale === "zh"
+                    ? "修改 /cp 命令"
+                    : "Edit /cp command"
+                  : locale === "zh"
+                    ? "发布 /cp"
+                    : "Publish /cp"}
+              </button>
+              {cardContextMenu.item.commandEnabled && cardContextMenu.item.commandName ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="card-context-menu__item"
+                    disabled={saving}
+                    onClick={() => {
+                      const commandName = cardContextMenu.item.commandName ?? "";
+                      setCardContextMenu(null);
+                      void copyPromptCommand(commandName);
+                    }}
+                  >
+                    {locale === "zh" ? "复制 /cp 命令" : "Copy /cp command"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="card-context-menu__item"
+                    disabled={saving}
+                    onClick={() => {
+                      const item = cardContextMenu.item;
+                      setCardContextMenu(null);
+                      void unpublishPromptCommand(item);
+                    }}
+                  >
+                    {locale === "zh" ? "取消发布 /cp" : "Unpublish /cp"}
+                  </button>
+                </>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className="card-context-menu__item"
+                disabled={saving}
+                onClick={() => {
+                  const item = cardContextMenu.item;
+                  setCardContextMenu(null);
+                  openSkillConvertEditor(item);
+                }}
+              >
+                {cardContextMenu.item.convertedSkillId
+                  ? locale === "zh"
+                    ? "再次转为 Skill"
+                    : "Convert to Skill again"
+                  : locale === "zh"
+                    ? "转为 Skill"
+                    : "Convert to Skill"}
+              </button>
               {cardContextMenu.item.type !== "image" && cardContextMenu.item.outputExample?.trim() ? (
                 <button
                   type="button"
@@ -842,6 +1078,210 @@ export default function PromptLibraryPage() {
           )
         : null}
 
+      {commandEditor
+        ? createPortal(
+            <div className="prompt-create-modal-root">
+              <div
+                className="prompt-create-modal-backdrop"
+                onClick={() => setCommandEditor(null)}
+                aria-hidden
+              />
+              <div
+                className="prompt-create-modal prompt-command-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="prompt-command-title"
+              >
+                <header className="prompt-create-modal__header">
+                  <div className="prompt-create-modal__header-text">
+                    <h2 id="prompt-command-title" className="prompt-create-modal__title">
+                      {locale === "zh" ? "发布 /cp 命令" : "Publish /cp command"}
+                    </h2>
+                    <p className="prompt-create-modal__subtitle">
+                      {locale === "zh"
+                        ? "命令名不需要输入 /cp-，保存后会显示为 /cp-xxx。"
+                        : "Enter the name without /cp-. It will be shown as /cp-xxx."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="prompt-create-modal__close"
+                    onClick={() => setCommandEditor(null)}
+                    aria-label={locale === "zh" ? "关闭" : "Close"}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                      <path
+                        d="M6 6l12 12M18 6L6 18"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </header>
+                <form
+                  className="prompt-create-modal__form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const item = library.items.find((x) => x.id === commandEditor.itemId);
+                    if (!item) {
+                      setCommandEditor(null);
+                      return;
+                    }
+                    void publishPromptCommand(item, commandEditor.commandName);
+                  }}
+                >
+                  <div className="prompt-create-modal__body">
+                    <label className="prompt-create-modal__field" htmlFor="prompt-command-name">
+                      <span className="prompt-create-modal__label">
+                        {locale === "zh" ? "命令名" : "Command name"}
+                      </span>
+                      <div className="prompt-command-modal__input-row">
+                        <span className="prompt-command-modal__prefix">/cp-</span>
+                        <input
+                          id="prompt-command-name"
+                          className="prompt-create-modal__input"
+                          value={commandEditor.commandName}
+                          onChange={(e) =>
+                            setCommandEditor((cur) =>
+                              cur ? { ...cur, commandName: e.target.value } : cur,
+                            )
+                          }
+                          placeholder="prd-review"
+                          autoComplete="off"
+                          autoFocus
+                        />
+                      </div>
+                    </label>
+                  </div>
+                  <footer className="prompt-create-modal__footer">
+                    <span className="prompt-create-modal__kbd-hint">
+                      {displayPromptCommand(slugifyCommandName(commandEditor.commandName))}
+                    </span>
+                    <div className="prompt-create-modal__actions">
+                      <button
+                        type="button"
+                        className="prompt-create-modal__cancel"
+                        onClick={() => setCommandEditor(null)}
+                        disabled={saving}
+                      >
+                        {locale === "zh" ? "取消" : "Cancel"}
+                      </button>
+                      <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
+                        {locale === "zh" ? "发布" : "Publish"}
+                      </button>
+                    </div>
+                  </footer>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {skillConvertEditor
+        ? createPortal(
+            <div className="prompt-create-modal-root">
+              <div
+                className="prompt-create-modal-backdrop"
+                onClick={() => setSkillConvertEditor(null)}
+                aria-hidden
+              />
+              <div
+                className="prompt-create-modal prompt-command-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="prompt-skill-title"
+              >
+                <header className="prompt-create-modal__header">
+                  <div className="prompt-create-modal__header-text">
+                    <h2 id="prompt-skill-title" className="prompt-create-modal__title">
+                      {locale === "zh" ? "转为 Skill" : "Convert to Skill"}
+                    </h2>
+                    <p className="prompt-create-modal__subtitle">
+                      {locale === "zh"
+                        ? "Skill 名不需要输入 cps-，生成后会作为 /cps-xxx 同步到 Agent。"
+                        : "Enter the name without cps-. It will be generated as /cps-xxx for agents."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="prompt-create-modal__close"
+                    onClick={() => setSkillConvertEditor(null)}
+                    aria-label={locale === "zh" ? "关闭" : "Close"}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
+                      <path
+                        d="M6 6l12 12M18 6L6 18"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </header>
+                <form
+                  className="prompt-create-modal__form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const item = library.items.find((x) => x.id === skillConvertEditor.itemId);
+                    if (!item) {
+                      setSkillConvertEditor(null);
+                      return;
+                    }
+                    void convertPromptItemToSkill(item, skillConvertEditor.skillName);
+                  }}
+                >
+                  <div className="prompt-create-modal__body">
+                    <label className="prompt-create-modal__field" htmlFor="prompt-skill-name">
+                      <span className="prompt-create-modal__label">
+                        {locale === "zh" ? "Skill 名" : "Skill name"}
+                      </span>
+                      <div className="prompt-command-modal__input-row">
+                        <span className="prompt-command-modal__prefix">/cps-</span>
+                        <input
+                          id="prompt-skill-name"
+                          className="prompt-create-modal__input"
+                          value={skillConvertEditor.skillName}
+                          onChange={(e) =>
+                            setSkillConvertEditor((cur) =>
+                              cur ? { ...cur, skillName: e.target.value } : cur,
+                            )
+                          }
+                          placeholder="prd-review"
+                          autoComplete="off"
+                          autoFocus
+                        />
+                      </div>
+                    </label>
+                  </div>
+                  <footer className="prompt-create-modal__footer">
+                    <span className="prompt-create-modal__kbd-hint">
+                      {`/cps-${slugifyCommandName(skillConvertEditor.skillName)}`}
+                    </span>
+                    <div className="prompt-create-modal__actions">
+                      <button
+                        type="button"
+                        className="prompt-create-modal__cancel"
+                        onClick={() => setSkillConvertEditor(null)}
+                        disabled={saving}
+                      >
+                        {locale === "zh" ? "取消" : "Cancel"}
+                      </button>
+                      <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
+                        {locale === "zh" ? "生成 Skill" : "Create Skill"}
+                      </button>
+                    </div>
+                  </footer>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
       {err ? <p className="error">{err}</p> : null}
       {toast ? (
         <div className="toast-stack">
@@ -849,6 +1289,34 @@ export default function PromptLibraryPage() {
             <span className="toast__text">{toast.message}</span>
           </div>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PromptPublishBadges({ item, locale }: { item: PromptItem; locale: "zh" | "en" }) {
+  const commandName = item.commandEnabled && item.commandName ? item.commandName : null;
+  const converted = Boolean(item.convertedSkillId);
+  if (!commandName && !converted) {
+    return (
+      <div className="prompt-lib__publish-badges" aria-label={locale === "zh" ? "发布状态" : "Publish status"}>
+        <span className="prompt-lib__publish-badge prompt-lib__publish-badge--muted">
+          {locale === "zh" ? "未发布" : "Unpublished"}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="prompt-lib__publish-badges" aria-label={locale === "zh" ? "发布状态" : "Publish status"}>
+      {commandName ? (
+        <span className="prompt-lib__publish-badge prompt-lib__publish-badge--cp">
+          {displayPromptCommand(commandName)}
+        </span>
+      ) : null}
+      {converted ? (
+        <span className="prompt-lib__publish-badge prompt-lib__publish-badge--skill">
+          {locale === "zh" ? "已转 Skill" : "Skill"}
+        </span>
       ) : null}
     </div>
   );

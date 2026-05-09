@@ -37,6 +37,10 @@ export type CopySkillTargetPayload =
     }
   | {
       destKind: "myLibrary";
+    }
+  | {
+      destKind: "promptGlobal";
+      agentId: string;
     };
 
 export type CopySkillMenuSection = {
@@ -95,6 +99,39 @@ function globalItems(agentId: string): CopySkillMenuSection["items"] {
   }));
 }
 
+export type PromptApplyAgentTarget = {
+  id: string;
+  label: string;
+};
+
+function promptGlobalItems(
+  agents: readonly PromptApplyAgentTarget[],
+): CopySkillMenuSection["items"] {
+  return agents.map(({ id: agentId, label }) => {
+    const agentName = AGENT_UI_NAME[agentId] ?? agentId;
+    return {
+      id: `prompt:${agentId}`,
+      label: label || agentName,
+      payload: {
+        destKind: "promptGlobal" as const,
+        agentId,
+      },
+    };
+  });
+}
+
+export function buildPromptApplyMenuSections(
+  agents: readonly PromptApplyAgentTarget[],
+): CopySkillMenuSection[] {
+  return [
+    {
+      key: "global-prompt-agents",
+      title: "应用到 · Agent",
+      items: promptGlobalItems(agents),
+    },
+  ];
+}
+
 function projectItems(
   projectRoot: string,
   agentId: string,
@@ -124,6 +161,8 @@ export function buildCopySkillMenuSections(params: {
   agentProjectScanPaths: readonly string[];
   /** 首页导入对话框等处设为 `"导入"`，以便分段标题写「导入到」 */
   copyVerb?: "复制" | "导入";
+  /** 普通复制默认不进入「我的」；仅明确导入/收藏到我的技能库时开启。 */
+  includeMyLibrary?: boolean;
 }): CopySkillMenuSection[] {
   const {
     dataSet,
@@ -132,12 +171,11 @@ export function buildCopySkillMenuSections(params: {
     projectPaths,
     agentProjectScanPaths,
     copyVerb = "复制",
+    includeMyLibrary = false,
   } = params;
   const sections: CopySkillMenuSection[] = [];
-  const prependMine = (list: CopySkillMenuSection[]) => [
-    mineLibrarySection(copyVerb),
-    ...list,
-  ];
+  const maybePrependMine = (list: CopySkillMenuSection[]) =>
+    includeMyLibrary ? [mineLibrarySection(copyVerb), ...list] : list;
 
   if (dataSet === "skills" && ecosystem) {
     sections.push({
@@ -152,7 +190,7 @@ export function buildCopySkillMenuSections(params: {
         items: projectItems(p, ecosystem),
       });
     }
-    return prependMine(sections);
+    return maybePrependMine(sections);
   }
 
   if (dataSet === "project") {
@@ -175,7 +213,7 @@ export function buildCopySkillMenuSections(params: {
         items: AGENT_ORDER.flatMap((id) => projectItems(pt, id)),
       });
     }
-    return prependMine(sections);
+    return maybePrependMine(sections);
   }
 
   if (dataSet === "aggregate") {
@@ -193,8 +231,8 @@ export function buildCopySkillMenuSections(params: {
         items: AGENT_ORDER.flatMap((id) => projectItems(pt, id)),
       });
     }
-    return prependMine(sections);
+    return maybePrependMine(sections);
   }
 
-  return prependMine(sections);
+  return maybePrependMine(sections);
 }

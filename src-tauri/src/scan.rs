@@ -733,6 +733,55 @@ fn push_skills_from_project_root(root: &Path, list: &mut Vec<AssetEntry>) {
     push_skills_from_paths(paths, list);
 }
 
+fn push_prompt_commands_from_roots(roots: &[PathBuf], list: &mut Vec<AssetEntry>) {
+    let mut paths = Vec::new();
+    for root in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if name.starts_with("cp-") && name.ends_with(".md") {
+                paths.push(p);
+            }
+        }
+    }
+    paths.sort();
+    for p in paths {
+        let title = p
+            .file_stem()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "cp-prompt".into());
+        let desc = read_preview(&p, 160);
+        let desc = if desc.is_empty() {
+            p.to_string_lossy().into_owned()
+        } else {
+            desc
+        };
+        list.push(AssetEntry {
+            id: stable_id("prompt", &p),
+            kind: "prompt".into(),
+            title,
+            description: desc,
+            path: p.to_string_lossy().into_owned(),
+            active: true,
+            scenario: None,
+            brief_zh: None,
+            brief_en: None,
+            skill_extra_files: None,
+        });
+    }
+}
+
 fn push_rules_from_paths(mut paths: Vec<PathBuf>, list: &mut Vec<AssetEntry>) {
     paths.sort();
     for p in paths {
@@ -924,6 +973,7 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
                 home.join(".cursor/skills"),
             ];
             push_skills_from_roots(&roots_skill, &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".cursor/commands")], &mut skills);
             let mcp_path = home.join(".cursor/mcp.json");
             if mcp_path.is_file() {
                 parse_mcp_file(&mcp_path, &mut mcp);
@@ -932,6 +982,7 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
         }
         "claude" => {
             push_skills_from_roots(&[home.join(".claude/skills")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".claude/commands")], &mut skills);
             let settings = home.join(".claude/settings.json");
             if settings.is_file() {
                 if let Ok(text) = fs::read_to_string(&settings) {
@@ -960,6 +1011,7 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
         }
         "trae" => {
             push_skills_from_roots(&[home.join(".trae/skills")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".trae/commands")], &mut skills);
             for name in [".trae/mcp.json", ".cursor/mcp.json"] {
                 let p = home.join(name);
                 if p.is_file() {
@@ -990,6 +1042,13 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
         "qoder" => {
             push_skills_from_roots(
                 &[home.join(".qoder/skills"), home.join(".qoderwork/skills")],
+                &mut skills,
+            );
+            push_prompt_commands_from_roots(
+                &[
+                    home.join(".qoder/commands"),
+                    home.join(".qoderwork/commands"),
+                ],
                 &mut skills,
             );
             for rel in [".qoder/mcp.json", ".qoderwork/mcp.json"] {
@@ -1024,6 +1083,7 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
         }
         "kiro" => {
             push_skills_from_roots(&[home.join(".kiro/skills")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".kiro/commands")], &mut skills);
             let mut k_paths = Vec::new();
             let kr = home.join(".kiro/rules");
             if kr.is_dir() {

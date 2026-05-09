@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 const PROMPT_LIBRARY_FILE: &str = "prompt-library.json";
@@ -24,6 +24,12 @@ pub struct PromptItem {
     pub r#type: String,
     pub title: String,
     pub prompt: String,
+    #[serde(default)]
+    pub command_name: Option<String>,
+    #[serde(default)]
+    pub command_enabled: bool,
+    #[serde(default)]
+    pub converted_skill_id: Option<String>,
     #[serde(default)]
     pub output_type: String,
     #[serde(default)]
@@ -155,6 +161,18 @@ fn validate_and_normalize(mut lib: PromptLibraryFile) -> Result<PromptLibraryFil
     for item in &mut lib.items {
         item.title = item.title.trim().to_string();
         item.prompt = item.prompt.trim().to_string();
+        item.command_name = item
+            .command_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        item.converted_skill_id = item
+            .converted_skill_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
         item.output_type = item.output_type.trim().to_string();
         item.output_example = item.output_example.trim().to_string();
         item.related_link = item
@@ -175,6 +193,15 @@ fn validate_and_normalize(mut lib: PromptLibraryFile) -> Result<PromptLibraryFil
         // 图片类型允许 prompt 为空（用于仅收藏输出示例图片）。
         if item.r#type != "image" && item.prompt.is_empty() {
             return Err(format!("条目 {} 缺少必填字段", item.id));
+        }
+        if item.command_enabled {
+            let name = item
+                .command_name
+                .as_deref()
+                .ok_or_else(|| format!("条目 {} 已启用 /cp 命令但缺少 commandName", item.id))?;
+            if !is_valid_command_name(name) {
+                return Err(format!("条目 {} commandName 非法：{}", item.id, name));
+            }
         }
         if !matches!(item.output_type.as_str(), "image" | "code" | "doc" | "text") {
             return Err(format!(
@@ -233,6 +260,116 @@ fn validate_and_normalize(mut lib: PromptLibraryFile) -> Result<PromptLibraryFil
             .collect();
     }
     Ok(lib)
+}
+
+fn is_valid_command_name(name: &str) -> bool {
+    let s = name.trim();
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && !s.contains("--")
+}
+
+fn home_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+}
+
+fn agent_command_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> {
+    let home = home_dir();
+    Ok(match agent_id {
+        "cursor" => vec![home.join(".cursor/commands")],
+        "claude" => vec![home.join(".claude/commands")],
+        "trae" => vec![home.join(".trae/commands")],
+        "qoder" => vec![
+            home.join(".qoder/commands"),
+            home.join(".qoderwork/commands"),
+        ],
+        "kiro" => vec![home.join(".kiro/commands")],
+        _ => return Err(format!("未知 agent: {agent_id}")),
+    })
+}
+
+fn pick_agent_command_parent(agent_id: &str) -> Result<PathBuf, String> {
+    let parents = agent_command_parent_dirs(agent_id)?;
+    if let Some(existing_commands) = parents.iter().find(|p| p.is_dir()) {
+        return Ok(existing_commands.clone());
+    }
+    if let Some(existing_agent_root) = parents
+        .iter()
+        .find(|p| p.parent().is_some_and(|root| root.is_dir()))
+    {
+        return Ok(existing_agent_root.clone());
+    }
+    parents
+        .into_iter()
+        .next()
+        .ok_or_else(|| "未找到 Agent 命令目录".to_string())
+}
+
+fn command_file_stem(command_name: &str) -> Result<String, String> {
+    let raw = command_name
+        .trim()
+        .trim_start_matches('/')
+        .strip_prefix("cp-")
+        .unwrap_or_else(|| command_name.trim().trim_start_matches('/'));
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in raw.to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        return Err("命令名不能为空".into());
+    }
+    Ok(format!("cp-{out}"))
+}
+
+fn yaml_quote(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', " ")
+}
+
+fn write_prompt_command_file(
+    parent: &Path,
+    title: &str,
+    prompt: &str,
+    command_name: &str,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(parent).map_err(|e| format!("创建命令目录失败：{e}"))?;
+    let stem = command_file_stem(command_name)?;
+    let path = parent.join(format!("{stem}.md"));
+    let content = format!(
+        "---\ndescription: \"{}\"\n---\n\n{}",
+        yaml_quote(title.trim()),
+        prompt.trim()
+    );
+    fs::write(&path, content).map_err(|e| format!("写入 Prompt 命令失败：{e}"))?;
+    Ok(path)
+}
+
+pub fn apply_prompt_command_to_agent(
+    agent_id: &str,
+    title: &str,
+    prompt: &str,
+    command_name: &str,
+) -> Result<String, String> {
+    if prompt.trim().is_empty() {
+        return Err("Prompt 不能为空".into());
+    }
+    let parent = pick_agent_command_parent(agent_id)?;
+    let path = write_prompt_command_file(&parent, title, prompt, command_name)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 fn write_library_atomic(app: &AppHandle, lib: &PromptLibraryFile) -> Result<(), String> {

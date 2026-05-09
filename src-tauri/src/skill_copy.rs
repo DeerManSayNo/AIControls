@@ -145,6 +145,19 @@ fn pick_dest_dir(dest_parent: &Path, base: &str, use_suffix: bool) -> Result<Pat
     }
 }
 
+fn prefixed_folder_base_name(base: &str, prefix: Option<&str>) -> String {
+    let base = sanitize_folder_segment(base);
+    let Some(prefix) = prefix.map(str::trim).filter(|s| !s.is_empty()) else {
+        return base;
+    };
+    let prefix = sanitize_folder_segment(prefix);
+    if prefix.is_empty() || base.starts_with(&prefix) {
+        base
+    } else {
+        format!("{prefix}{base}")
+    }
+}
+
 fn copy_tree_merge_contents(from: &Path, to: &Path) -> Result<(), String> {
     if !from.is_dir() {
         return Err(format!("源不是目录: {}", from.display()));
@@ -168,6 +181,84 @@ fn copy_tree_merge_contents(from: &Path, to: &Path) -> Result<(), String> {
                 .map_err(|e| format!("复制文件失败 {e}: {} → {}", fp.display(), tp.display()))?;
         }
     }
+    Ok(())
+}
+
+fn find_primary_skill_doc(dir: &Path) -> Option<PathBuf> {
+    for name in ["SKILL.md", "skill.md", "CLAUDE.md", "claude.md"] {
+        let p = dir.join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn slugify_skill_name(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in input.trim().to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "skill".into()
+    } else {
+        out
+    }
+}
+
+fn ensure_skill_doc_name_prefix(
+    skill_dir: &Path,
+    folder_prefix: Option<&str>,
+) -> Result<(), String> {
+    let Some(prefix) = folder_prefix.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let Some(doc) = find_primary_skill_doc(skill_dir) else {
+        return Ok(());
+    };
+    let text = fs::read_to_string(&doc).unwrap_or_default();
+    let desired_name = skill_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(slugify_skill_name)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("{prefix}skill"));
+
+    let mut lines: Vec<String> = text.lines().map(ToString::to_string).collect();
+    if lines.first().is_some_and(|line| line.trim() == "---") {
+        if let Some(end_idx) = lines
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(idx, line)| (line.trim() == "---").then_some(idx))
+        {
+            for line in lines.iter_mut().take(end_idx).skip(1) {
+                if line.trim_start().starts_with("name:") {
+                    *line = format!("name: {desired_name}");
+                    let mut next = lines.join("\n");
+                    next.push('\n');
+                    fs::write(&doc, next).map_err(|e| format!("更新 Skill name 失败: {e}"))?;
+                    return Ok(());
+                }
+            }
+            lines.insert(1, format!("name: {desired_name}"));
+            let mut next = lines.join("\n");
+            next.push('\n');
+            fs::write(&doc, next).map_err(|e| format!("更新 Skill name 失败: {e}"))?;
+            return Ok(());
+        }
+    }
+
+    let next = format!("---\nname: {desired_name}\n---\n\n{text}");
+    fs::write(&doc, next).map_err(|e| format!("更新 Skill name 失败: {e}"))?;
     Ok(())
 }
 
@@ -285,14 +376,35 @@ pub fn perform_copy(
     project_root: Option<&str>,
     on_conflict_suffix: bool,
 ) -> Result<String, String> {
+    perform_copy_with_options(
+        source_path,
+        kind,
+        agent_id,
+        bucket_index,
+        project_root,
+        on_conflict_suffix,
+        None,
+    )
+}
+
+pub fn perform_copy_with_options(
+    source_path: &str,
+    kind: &str,
+    agent_id: &str,
+    bucket_index: usize,
+    project_root: Option<&str>,
+    on_conflict_suffix: bool,
+    folder_name_prefix: Option<&str>,
+) -> Result<String, String> {
     let root_path = project_root.map(Path::new);
     let dest_parent_uncanon = resolve_dest_parent(kind, agent_id, bucket_index, root_path)?;
     let guard = if kind == "project" { root_path } else { None };
-    let final_dir = copy_skill_package_into_parent(
+    let final_dir = copy_skill_package_into_parent_with_options(
         &dest_parent_uncanon,
         source_path,
         on_conflict_suffix,
         guard,
+        folder_name_prefix,
     )?;
     Ok(final_dir.to_string_lossy().into_owned())
 }
@@ -303,6 +415,22 @@ pub fn copy_skill_package_into_parent(
     source_path: &str,
     on_conflict_suffix: bool,
     project_root_for_guard: Option<&Path>,
+) -> Result<PathBuf, String> {
+    copy_skill_package_into_parent_with_options(
+        dest_parent_uncanon,
+        source_path,
+        on_conflict_suffix,
+        project_root_for_guard,
+        None,
+    )
+}
+
+pub fn copy_skill_package_into_parent_with_options(
+    dest_parent_uncanon: &Path,
+    source_path: &str,
+    on_conflict_suffix: bool,
+    project_root_for_guard: Option<&Path>,
+    folder_name_prefix: Option<&str>,
 ) -> Result<PathBuf, String> {
     fs::create_dir_all(dest_parent_uncanon).map_err(|e| format!("无法创建目标目录: {e}"))?;
 
@@ -319,13 +447,19 @@ pub fn copy_skill_package_into_parent(
         }
     }
 
-    finish_skill_copy_under_dest(&dest_parent, source_path.trim(), on_conflict_suffix)
+    finish_skill_copy_under_dest(
+        &dest_parent,
+        source_path.trim(),
+        on_conflict_suffix,
+        folder_name_prefix,
+    )
 }
 
 fn finish_skill_copy_under_dest(
     dest_parent: &Path,
     source_path: &str,
     on_conflict_suffix: bool,
+    folder_name_prefix: Option<&str>,
 ) -> Result<PathBuf, String> {
     let source = Path::new(source_path.trim());
     let source_kind = resolve_skill_copy_source(source)?;
@@ -338,8 +472,10 @@ fn finish_skill_copy_under_dest(
             if path_starts_with_canonical(dest_parent, &root) {
                 return Err("不能复制到该技能包自身目录内部".into());
             }
+            let folder_base_name = prefixed_folder_base_name(&folder_base_name, folder_name_prefix);
             let dest_dir = pick_dest_dir(dest_parent, &folder_base_name, on_conflict_suffix)?;
             copy_tree_merge_contents(&root, &dest_dir)?;
+            ensure_skill_doc_name_prefix(&dest_dir, folder_name_prefix)?;
             Ok(dest_dir)
         }
         SkillCopySource::LooseMarkdown {
@@ -353,6 +489,7 @@ fn finish_skill_copy_under_dest(
             if path_starts_with_canonical(dest_parent, &parent) {
                 return Err("不能复制到源文件所在目录内部".into());
             }
+            let dest_folder_name = prefixed_folder_base_name(&dest_folder_name, folder_name_prefix);
             let dest_dir = pick_dest_dir(dest_parent, &dest_folder_name, on_conflict_suffix)?;
             fs::create_dir_all(&dest_dir).map_err(|e| format!("{e}"))?;
             let fname = skill_md
@@ -370,6 +507,7 @@ fn finish_skill_copy_under_dest(
                 }
             }
 
+            ensure_skill_doc_name_prefix(&dest_dir, folder_name_prefix)?;
             Ok(dest_dir)
         }
     }

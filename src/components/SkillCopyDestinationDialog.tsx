@@ -9,7 +9,7 @@ import type {
 
 /** 与 payload 对应的复制桶键，用于与后端返回的可见列表对齐 */
 function bucketKey(payload: CopySkillTargetPayload): string {
-  if (payload.destKind === "myLibrary") {
+  if (payload.destKind === "myLibrary" || payload.destKind === "promptGlobal") {
     return "";
   }
   return `${payload.agentId}:${payload.bucketIndex}`;

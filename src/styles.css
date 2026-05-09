@@ -2707,6 +2707,23 @@ main {
   letter-spacing: -0.01em;
 }
 
+.skill-card__command {
+  flex-shrink: 1;
+  max-width: 42%;
+  padding: 0.13rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  background: color-mix(in srgb, var(--accent-muted) 70%, transparent);
+  color: var(--accent-dim);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .skill-card__kind {
   flex-shrink: 0;
   align-self: center;
@@ -2738,6 +2755,12 @@ main {
   color: color-mix(in srgb, var(--accent) 76%, #8ff6e7);
 }
 
+.skill-card__kind--prompt {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: color-mix(in srgb, #93c5fd 86%, var(--text) 14%);
+}
+
 @media (prefers-color-scheme: light) {
   .skill-card__kind--skill {
     background: rgba(13, 148, 136, 0.11);
@@ -2755,6 +2778,12 @@ main {
     background: rgba(13, 148, 136, 0.1);
     border-color: rgba(13, 148, 136, 0.35);
     color: var(--accent-dim);
+  }
+
+  .skill-card__kind--prompt {
+    background: rgba(37, 99, 235, 0.09);
+    border-color: rgba(37, 99, 235, 0.3);
+    color: color-mix(in srgb, #1d4ed8 86%, var(--text) 14%);
   }
 }
 
@@ -3901,12 +3930,18 @@ th {
 
 .prompt-lib__masonry-body {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.58rem 0.62rem 0.62rem;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 88%, var(--bg) 12%);
+}
+
+.prompt-lib__masonry-main {
+  min-width: 0;
+  display: grid;
+  gap: 0.36rem;
 }
 
 .prompt-lib__masonry-title {
@@ -3918,6 +3953,43 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.prompt-lib__publish-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.prompt-lib__publish-badge {
+  max-width: 100%;
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface-hover) 58%, transparent);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-lib__publish-badge--cp {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  color: var(--accent-dim);
+  background: color-mix(in srgb, var(--accent-muted) 72%, transparent);
+}
+
+.prompt-lib__publish-badge--skill {
+  border-color: color-mix(in srgb, #8b5cf6 30%, var(--border));
+  color: color-mix(in srgb, #a78bfa 82%, var(--text));
+  background: color-mix(in srgb, #8b5cf6 14%, transparent);
+}
+
+.prompt-lib__publish-badge--muted {
+  color: var(--muted);
 }
 
 .prompt-lib__masonry-copy {
@@ -3962,6 +4034,24 @@ th {
   background: rgba(6, 8, 12, 0.55);
   backdrop-filter: blur(8px) saturate(1.05);
   animation: prompt-create-backdrop-in 0.22s var(--ease-out) both;
+}
+
+.prompt-command-modal {
+  max-width: min(28rem, calc(100vw - 2rem));
+}
+
+.prompt-command-modal__input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.prompt-command-modal__prefix {
+  flex-shrink: 0;
+  color: var(--accent-dim);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 800;
 }
 
 @media (prefers-color-scheme: light) {

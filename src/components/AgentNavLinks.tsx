@@ -8,7 +8,15 @@ function navClass(active: boolean) {
   return `side-nav-link${active ? " active" : ""}`;
 }
 
-export default function AgentNavLinks() {
+type Props = {
+  pendingActivePath?: string | null;
+  onPendingActivePath?: (path: string) => void;
+};
+
+export default function AgentNavLinks({
+  pendingActivePath = null,
+  onPendingActivePath,
+}: Props) {
   const { t } = useI18n();
   const [agents, setAgents] = useState<AgentScanResult[] | null>(null);
 
@@ -37,18 +45,25 @@ export default function AgentNavLinks() {
 
   return (
     <>
-      {agents.map((a) => (
-        <NavLink
-          key={a.id}
-          to={`/agent/${a.id}`}
-          className={({ isActive }) => navClass(isActive)}
-        >
-          <span className="side-nav-link__icon">
-            {NavIconForAgent(a.id)}
-          </span>
-          <span className="side-nav-link__label">{a.label}</span>
-        </NavLink>
-      ))}
+      {agents.map((a) => {
+        const to = `/agent/${a.id}`;
+        return (
+          <NavLink
+            key={a.id}
+            to={to}
+            className={({ isActive }) =>
+              navClass(pendingActivePath ? pendingActivePath === to : isActive)
+            }
+            onPointerDown={() => onPendingActivePath?.(to)}
+            onClick={() => onPendingActivePath?.(to)}
+          >
+            <span className="side-nav-link__icon">
+              {NavIconForAgent(a.id)}
+            </span>
+            <span className="side-nav-link__label">{a.label}</span>
+          </NavLink>
+        );
+      })}
     </>
   );
 }

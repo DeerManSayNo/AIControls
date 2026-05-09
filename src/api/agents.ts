@@ -89,6 +89,7 @@ export type CopySkillPackageInput = {
   bucketIndex: number;
   projectRoot?: string;
   onConflict?: "suffix" | "error";
+  folderNamePrefix?: string | null;
 };
 
 export type GithubSkillCandidate = {
@@ -137,6 +138,7 @@ export async function copySkillPackage(
       bucketIndex: input.bucketIndex,
       projectRoot: input.projectRoot ?? null,
       onConflict: input.onConflict ?? "suffix",
+      folderNamePrefix: input.folderNamePrefix ?? null,
     });
     return { path };
   } catch (e) {

@@ -11,8 +11,8 @@ mod scan;
 mod skill_copy;
 mod storage;
 
-use serde::Serialize;
 use scan::AgentInventory;
+use serde::Serialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -153,11 +153,7 @@ fn configure_float_ball(app: &AppHandle) {
         let x = position.x + size.width as i32 - FLOAT_BALL_DEFAULT_RIGHT_OFFSET;
         let y = position.y + size.height as i32 - FLOAT_BALL_DEFAULT_BOTTOM_OFFSET;
         let default_position = PhysicalPosition::new(x.max(position.x), y.max(position.y));
-        let position = clamp_float_ball_position(
-            app,
-            default_position,
-            Some(collapsed_size),
-        );
+        let position = clamp_float_ball_position(app, default_position, Some(collapsed_size));
         let _ = ball.set_position(expanded_from_collapsed(position));
     }
 }
@@ -180,10 +176,8 @@ fn start_float_ball_hover_watcher(app: AppHandle) {
                     let top = position.y as f64;
                     let right = left + size.width as f64;
                     let bottom = top + size.height as f64;
-                    let collapsed_width =
-                        FLOAT_BALL_COLLAPSED_WIDTH as f64 * scale_factor;
-                    let collapsed_height =
-                        FLOAT_BALL_COLLAPSED_HEIGHT as f64 * scale_factor;
+                    let collapsed_width = FLOAT_BALL_COLLAPSED_WIDTH as f64 * scale_factor;
+                    let collapsed_height = FLOAT_BALL_COLLAPSED_HEIGHT as f64 * scale_factor;
                     let ball_left = left + (size.width as f64 - collapsed_width) / 2.0;
                     let ball_top = bottom - collapsed_height;
                     let ball_right = ball_left + collapsed_width;
@@ -228,10 +222,7 @@ fn start_float_ball_hover_watcher(app: AppHandle) {
 
             menu_open = payload.inside;
             last_inside = Some(payload.inside);
-            tokio::time::sleep(std::time::Duration::from_millis(
-                FLOAT_BALL_HOVER_POLL_MS,
-            ))
-            .await;
+            tokio::time::sleep(std::time::Duration::from_millis(FLOAT_BALL_HOVER_POLL_MS)).await;
         }
     });
 }
@@ -1082,18 +1073,20 @@ fn copy_skill_package(
     bucket_index: usize,
     project_root: Option<String>,
     on_conflict: Option<String>,
+    folder_name_prefix: Option<String>,
 ) -> Result<String, String> {
     let suffix = match on_conflict.as_deref() {
         Some("error") => false,
         _ => true,
     };
-    skill_copy::perform_copy(
+    skill_copy::perform_copy_with_options(
         &source_path,
         &dest_kind,
         &agent_id,
         bucket_index,
         project_root.as_deref(),
         suffix,
+        folder_name_prefix.as_deref(),
     )
 }
 
@@ -1148,6 +1141,35 @@ fn save_prompt_library(
     library: prompt_library::PromptLibraryFile,
 ) -> Result<(), String> {
     prompt_library::save_prompt_library(&app, library)
+}
+
+#[tauri::command]
+fn convert_prompt_to_my_skill(
+    app: AppHandle,
+    title: String,
+    prompt: String,
+    output_type: String,
+    output_example: String,
+    command_name: Option<String>,
+) -> Result<my_skills_library::MySkillItem, String> {
+    my_skills_library::convert_prompt_to_my_skill(
+        &app,
+        title,
+        prompt,
+        output_type,
+        output_example,
+        command_name,
+    )
+}
+
+#[tauri::command]
+fn apply_prompt_command_to_agent(
+    agent_id: String,
+    title: String,
+    prompt: String,
+    command_name: String,
+) -> Result<String, String> {
+    prompt_library::apply_prompt_command_to_agent(&agent_id, &title, &prompt, &command_name)
 }
 
 #[tauri::command]
@@ -1302,6 +1324,8 @@ pub fn run() {
             list_visible_project_skill_buckets,
             get_prompt_library,
             save_prompt_library,
+            convert_prompt_to_my_skill,
+            apply_prompt_command_to_agent,
             get_resource_library,
             save_resource_library,
             get_my_skills_library,

@@ -55,9 +55,11 @@ function readBoolFromLocalStorage(key: string, fallback: boolean): boolean {
 function Layout({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname, search } = location;
   const pathFromUrl = searchParams.get("path");
   const projectPaths = useProjectPaths();
+  const [pendingActivePath, setPendingActivePath] = useState<string | null>(null);
   const [agentsCollapsed, setAgentsCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     return readBoolFromLocalStorage("aicontrols-nav-collapse-agents", false);
@@ -89,8 +91,20 @@ function Layout({ children }: { children: ReactNode }) {
     }
   }, [pathname]);
 
+  useEffect(() => {
+    const currentPath = `${pathname}${search}`;
+    if (
+      pendingActivePath === currentPath ||
+      (pendingActivePath != null && !pendingActivePath.includes("?") && pendingActivePath === pathname)
+    ) {
+      setPendingActivePath(null);
+    }
+  }, [pathname, search, pendingActivePath]);
+
   const activeProjectPath =
     pathname === "/project" ? searchParams.get("path") : null;
+  const navLinkClass = (targetPath: string, isActive: boolean) =>
+    navClass(pendingActivePath ? pendingActivePath === targetPath : isActive);
 
   return (
     <div className="app-shell">
@@ -109,7 +123,13 @@ function Layout({ children }: { children: ReactNode }) {
               <span className="side-nav-brand__tag">{t("nav.tagline")}</span>
             </div>
           </div>
-          <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) => navLinkClass("/", isActive)}
+            onPointerDown={() => setPendingActivePath("/")}
+            onClick={() => setPendingActivePath("/")}
+          >
             <span className="side-nav-link__icon">
               <NavIconHome />
             </span>
@@ -119,7 +139,9 @@ function Layout({ children }: { children: ReactNode }) {
           </NavLink>
           <NavLink
             to="/board"
-            className={({ isActive }) => navClass(isActive)}
+            className={({ isActive }) => navLinkClass("/board", isActive)}
+            onPointerDown={() => setPendingActivePath("/board")}
+            onClick={() => setPendingActivePath("/board")}
           >
             <span className="side-nav-link__icon">
               <NavIconBoard />
@@ -128,7 +150,12 @@ function Layout({ children }: { children: ReactNode }) {
               {t("nav.board")}
             </span>
           </NavLink>
-          <NavLink to="/assets" className={({ isActive }) => navClass(isActive)}>
+          <NavLink
+            to="/assets"
+            className={({ isActive }) => navLinkClass("/assets", isActive)}
+            onPointerDown={() => setPendingActivePath("/assets")}
+            onClick={() => setPendingActivePath("/assets")}
+          >
             <span className="side-nav-link__icon">
               <NavIconLayers />
             </span>
@@ -136,7 +163,12 @@ function Layout({ children }: { children: ReactNode }) {
               {t("nav.assets")}
             </span>
           </NavLink>
-          <NavLink to="/prompts" className={({ isActive }) => navClass(isActive)}>
+          <NavLink
+            to="/prompts"
+            className={({ isActive }) => navLinkClass("/prompts", isActive)}
+            onPointerDown={() => setPendingActivePath("/prompts")}
+            onClick={() => setPendingActivePath("/prompts")}
+          >
             <span className="side-nav-link__icon">
               <NavIconPrompt />
             </span>
@@ -146,7 +178,9 @@ function Layout({ children }: { children: ReactNode }) {
           </NavLink>
           <NavLink
             to="/resources"
-            className={({ isActive }) => navClass(isActive)}
+            className={({ isActive }) => navLinkClass("/resources", isActive)}
+            onPointerDown={() => setPendingActivePath("/resources")}
+            onClick={() => setPendingActivePath("/resources")}
           >
             <span className="side-nav-link__icon">
               <NavIconFolder />
@@ -184,7 +218,10 @@ function Layout({ children }: { children: ReactNode }) {
             </span>
           </button>
           <div id="side-nav-agents" hidden={agentsCollapsed}>
-            <AgentNavLinks />
+            <AgentNavLinks
+              pendingActivePath={pendingActivePath}
+              onPendingActivePath={setPendingActivePath}
+            />
           </div>
           <div
             className={`side-nav__projects${projectsCollapsed ? " side-nav__projects--collapsed" : ""}`}
@@ -225,7 +262,13 @@ function Layout({ children }: { children: ReactNode }) {
                   activeProjectPath !== null &&
                   pathsReferToSameDir(activeProjectPath, p);
                 return (
-                  <ProjectNavItem key={p} projectPath={p} isCurrent={isCurrent} />
+                  <ProjectNavItem
+                    key={p}
+                    projectPath={p}
+                    isCurrent={isCurrent}
+                    pendingActivePath={pendingActivePath}
+                    onPendingActivePath={setPendingActivePath}
+                  />
                 );
               })}
               <AddProjectNavButton />
@@ -236,8 +279,10 @@ function Layout({ children }: { children: ReactNode }) {
         <div className="side-nav-footer">
           <NavLink
             to="/settings"
-            className={({ isActive }) => navClass(isActive)}
+            className={({ isActive }) => navLinkClass("/settings", isActive)}
             title={t("nav.settings")}
+            onPointerDown={() => setPendingActivePath("/settings")}
+            onClick={() => setPendingActivePath("/settings")}
           >
             <span className="side-nav-link__icon">
               <NavIconSettings />

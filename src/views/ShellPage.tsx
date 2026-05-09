@@ -492,6 +492,7 @@ export default function ShellPage({ subtitle }: Props) {
         ecosystem: undefined,
         agentProjectScanPaths: [],
         copyVerb: "导入",
+        includeMyLibrary: true,
       }),
     [projectPaths],
   );

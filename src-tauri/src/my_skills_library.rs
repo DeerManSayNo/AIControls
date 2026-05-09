@@ -32,6 +32,8 @@ pub struct MySkillItem {
     pub title: String,
     pub description: String,
     pub path: String,
+    #[serde(default)]
+    pub source_kind: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -94,6 +96,12 @@ fn validate_and_normalize(mut lib: MySkillsLibraryFile) -> Result<MySkillsLibrar
         item.title = item.title.trim().to_string();
         item.description = item.description.trim().to_string();
         item.path = item.path.trim().to_string();
+        item.source_kind = item
+            .source_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
         if item.id.is_empty() {
             return Err("「我的技能」条目 id 为空".into());
         }
@@ -178,6 +186,146 @@ pub fn add_skill_to_my_library(
         title,
         description,
         path: final_dir.to_string_lossy().into_owned(),
+        source_kind: None,
+        created_at: ts,
+        updated_at: ts,
+    };
+
+    let mut lib = load_my_skills_library(app)?;
+    lib.items.push(entry.clone());
+    let normalized = validate_and_normalize(lib)?;
+    write_library_atomic(app, &normalized)?;
+
+    Ok(entry)
+}
+
+fn slugify_skill_segment(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in input.trim().to_lowercase().chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            Some(ch)
+        } else if ch.is_whitespace() || matches!(ch, '-' | '_' | '/' | '\\' | ':' | '.') {
+            Some('-')
+        } else {
+            None
+        };
+        if let Some(c) = next {
+            if c == '-' {
+                if !last_dash && !out.is_empty() {
+                    out.push(c);
+                    last_dash = true;
+                }
+            } else {
+                out.push(c);
+                last_dash = false;
+            }
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "prompt-skill".into()
+    } else {
+        trimmed
+    }
+}
+
+fn pick_generated_skill_dir(parent: &Path, base: &str) -> PathBuf {
+    let mut n = 0_u32;
+    loop {
+        let name = if n == 0 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        let path = parent.join(name);
+        if !path.exists() {
+            return path;
+        }
+        n += 1;
+    }
+}
+
+fn yaml_quote(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', " ")
+}
+
+fn skill_markdown_from_prompt(
+    skill_name: &str,
+    title: &str,
+    prompt: &str,
+    output_type: &str,
+    output_example: &str,
+) -> String {
+    let description = format!("Prompt command generated from AIControls: {title}");
+    let mut md = format!(
+        "---\nname: {skill_name}\ndescription: \"{}\"\n---\n\n# {title}\n\nUse this skill when the user asks for the `{skill_name}` workflow or wants to reuse this AIControls prompt.\n\n## Prompt\n\n````text\n{}\n````\n",
+        yaml_quote(&description),
+        prompt.trim()
+    );
+    md.push_str(&format!("\n## Output Type\n\n{output_type}\n"));
+    if !output_example.trim().is_empty() {
+        md.push_str(&format!(
+            "\n## Reference Output Example\n\n````text\n{}\n````\n",
+            output_example.trim()
+        ));
+    }
+    md
+}
+
+pub fn convert_prompt_to_my_skill(
+    app: &AppHandle,
+    title: String,
+    prompt: String,
+    output_type: String,
+    output_example: String,
+    command_name: Option<String>,
+) -> Result<MySkillItem, String> {
+    let title = title.trim().to_string();
+    let prompt = prompt.trim().to_string();
+    let output_type = output_type.trim().to_string();
+    let output_example = output_example.trim().to_string();
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    if prompt.is_empty() {
+        return Err("Prompt 不能为空，无法转为 Skill".into());
+    }
+
+    let base_slug = command_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(slugify_skill_segment)
+        .unwrap_or_else(|| slugify_skill_segment(&title));
+    let skill_name = base_slug
+        .strip_prefix("cps-")
+        .or_else(|| base_slug.strip_prefix("cs-"))
+        .unwrap_or(&base_slug)
+        .to_string();
+
+    let pkgs = my_skills_packages_dir(app)?;
+    fs::create_dir_all(&pkgs).map_err(|e| format!("创建「我的技能」目录失败：{e}"))?;
+    let final_dir = pick_generated_skill_dir(&pkgs, &skill_name);
+    fs::create_dir_all(&final_dir).map_err(|e| format!("创建 Skill 目录失败：{e}"))?;
+
+    let content =
+        skill_markdown_from_prompt(&skill_name, &title, &prompt, &output_type, &output_example);
+    fs::write(final_dir.join("SKILL.md"), content)
+        .map_err(|e| format!("写入 SKILL.md 失败：{e}"))?;
+
+    let (title, description) = read_skill_folder_metadata(&final_dir)?;
+    let ts = now_ms();
+    let entry = MySkillItem {
+        id: Uuid::new_v4().to_string(),
+        title,
+        description,
+        path: final_dir.to_string_lossy().into_owned(),
+        source_kind: Some("prompt".into()),
         created_at: ts,
         updated_at: ts,
     };

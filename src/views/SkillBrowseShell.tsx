@@ -39,6 +39,12 @@ import {
   removeMySkill,
   type MySkillsLibraryFile,
 } from "../api/mySkills";
+import {
+  applyPromptCommandToAgent,
+  getPromptLibrary,
+  type PromptItem,
+  type PromptLibraryFile,
+} from "../api/prompts";
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
@@ -58,11 +64,16 @@ import {
   inventoryAssetCount,
 } from "../agentAssetGrouping";
 import { revealPathInFolder } from "../api/reveal";
-import { buildCopySkillMenuSections } from "../skillCopyTargets";
+import {
+  buildCopySkillMenuSections,
+  buildPromptApplyMenuSections,
+  type PromptApplyAgentTarget,
+} from "../skillCopyTargets";
 import { useI18n } from "../i18n/provider";
 import { open } from "@tauri-apps/plugin-dialog";
 
 type AssetKind = "skill" | "mcp" | "rule";
+type BrowseKind = AssetKind | "prompt";
 
 type BrowseRow = {
   id: string;
@@ -70,7 +81,7 @@ type BrowseRow = {
   title: string;
   desc: string;
   descSource: "ai" | "source";
-  kind: AssetKind;
+  kind: BrowseKind;
   ecosystem: string;
   tags: string[];
   active: boolean;
@@ -78,6 +89,13 @@ type BrowseRow = {
   sourcePath?: string;
   /** 技能包内除主 SKILL.md 外的文件（与 AssetEntry.skill_extra_files 一致） */
   skillExtraFiles?: string[];
+  /** AIControls 我的 Skills 暴露给 Agent 的 /cs 命令名 */
+  csCommand?: string;
+  /** AIControls 我的 Prompts 暴露出的 /cp 命令名 */
+  cpCommand?: string;
+  promptText?: string;
+  promptCommandName?: string;
+  mineSkillSourceKind?: "prompt" | null;
   /** DeepSeek 分类 slug；未命中时用关键词兜底 */
   scenario?: string | null;
 };
@@ -110,6 +128,54 @@ function skillBrowsePathIsDeletableFolder(sourcePath: string): boolean {
   return !/\/SKILL\.md$/i.test(t);
 }
 
+function slugifyCommandSegment(input: string): string {
+  const out = input
+    .trim()
+    .toLowerCase()
+    .replace(/^\/?(cps|cs)-/, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  return out || "skill";
+}
+
+function csCommandForSkill(title: string, sourcePath?: string): string {
+  const folder = sourcePath?.trim() ? folderBasename(sourcePath) : "";
+  const base = folder || title;
+  return `/cs-${slugifyCommandSegment(base)}`;
+}
+
+function cpsCommandForSkill(title: string, sourcePath?: string): string {
+  const folder = sourcePath?.trim() ? folderBasename(sourcePath) : "";
+  const base = folder || title;
+  return `/cps-${slugifyCommandSegment(base)}`;
+}
+
+function isCsSkillEntry(entry: AssetEntry): boolean {
+  const title = entry.title.trim().toLowerCase();
+  const folder = folderBasename(entry.path).trim().toLowerCase();
+  return title.startsWith("cs-") || folder.startsWith("cs-") || title.startsWith("cps-") || folder.startsWith("cps-") || title.startsWith("cp-") || folder.startsWith("cp-");
+}
+
+function csCommandForInstalledSkill(row: BrowseRow): string {
+  const title = row.title.trim().toLowerCase();
+  const base = title.startsWith("cs-") || title.startsWith("cps-")
+    ? row.title
+    : folderBasename(row.sourcePath ?? row.title);
+  const folder = folderBasename(row.sourcePath ?? "").toLowerCase();
+  if (title.startsWith("cp-") || folder.startsWith("cp-")) {
+    return `/cp-${slugifyCommandSegment(base)}`;
+  }
+  return title.startsWith("cps-") || folder.startsWith("cps-")
+    ? `/cps-${slugifyCommandSegment(base)}`
+    : `/cs-${slugifyCommandSegment(base)}`;
+}
+
+function cpCommandForPrompt(item: PromptItem): string | null {
+  if (!item.commandEnabled || !item.commandName?.trim()) return null;
+  return `/cp-${slugifyCommandSegment(item.commandName)}`;
+}
+
 /** HTML `id` 安全片段（来自路径等分组 key） */
 function sectionIdSafeFragment(sectionKey: string): string {
   const s = sectionKey.replace(/\W/g, "_");
@@ -121,6 +187,71 @@ type AggregateSnapshot = {
   projects: { path: string; inv: AgentInventory | null }[];
   anyInventoryFailed: boolean;
 };
+
+type AggregateSnapshotCache = {
+  version: 2;
+  savedAt: number;
+  projectSignature: string;
+  snapshot: AggregateSnapshot;
+  mySkillsLibrary: MySkillsLibraryFile | null;
+  promptLibrary: PromptLibraryFile | null;
+};
+
+const AGGREGATE_SNAPSHOT_CACHE_KEY = "aicontrols.aggregateSnapshot.v2";
+const AGGREGATE_SNAPSHOT_CACHE_TTL_MS = 10 * 60 * 1000;
+const AGGREGATE_RENDER_PAGE_SIZE = 12;
+
+function aggregateProjectSignature(paths: readonly string[]): string {
+  return [...paths].map((p) => p.trim()).filter(Boolean).sort().join("\n");
+}
+
+function readAggregateSnapshotCache(
+  projectPaths: readonly string[],
+): AggregateSnapshotCache | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(AGGREGATE_SNAPSHOT_CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as AggregateSnapshotCache;
+    if (data.version !== 2) return null;
+    if (data.projectSignature !== aggregateProjectSignature(projectPaths)) return null;
+    if (!data.snapshot) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function writeAggregateSnapshotCache(
+  projectPaths: readonly string[],
+  snapshot: AggregateSnapshot,
+  mySkillsLibrary: MySkillsLibraryFile | null,
+  promptLibrary: PromptLibraryFile | null,
+): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const data: AggregateSnapshotCache = {
+      version: 2,
+      savedAt: Date.now(),
+      projectSignature: aggregateProjectSignature(projectPaths),
+      snapshot,
+      mySkillsLibrary,
+      promptLibrary,
+    };
+    localStorage.setItem(AGGREGATE_SNAPSHOT_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // Cache is a startup optimization only; ignore quota/private-mode failures.
+  }
+}
+
+function clearAggregateSnapshotCache(): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.removeItem(AGGREGATE_SNAPSHOT_CACHE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
 
 function dedupeMergeInventories(parts: AgentInventory[]): AgentInventory {
   const seen = new Set<string>();
@@ -255,6 +386,13 @@ const FILTER_LABEL: Record<FilterKey, string> = {
 };
 
 const SEGMENT_KEYS: FilterKey[] = ["all", "skill", "mcp", "rule"];
+type MineKindFilter = "all" | "skill" | "prompt";
+
+const MINE_KIND_LABEL: Record<MineKindFilter, string> = {
+  all: "全部",
+  skill: "Skill",
+  prompt: "Prompt",
+};
 
 function inventoryToRows(
   inv: AgentInventory,
@@ -263,8 +401,9 @@ function inventoryToRows(
   locale: "zh" | "en",
 ): BrowseRow[] {
   const rows: BrowseRow[] = [];
-  const push = (e: AssetEntry, kind: AssetKind) => {
+  const push = (e: AssetEntry, kind: BrowseKind) => {
     const brief = (locale === "zh" ? e.brief_zh : e.brief_en)?.trim();
+    const label = kind === "prompt" ? "Prompt" : FILTER_LABEL[kind];
     rows.push({
       id: e.id,
       sourceId: e.id,
@@ -273,14 +412,14 @@ function inventoryToRows(
       descSource: brief ? "ai" : "source",
       kind,
       ecosystem,
-      tags: [FILTER_LABEL[kind], agentTitle],
+      tags: [label, agentTitle],
       active: e.active,
       sourcePath: e.path,
       skillExtraFiles: e.skill_extra_files ?? undefined,
       scenario: e.scenario ?? null,
     });
   };
-  for (const e of inv.skills) push(e, "skill");
+  for (const e of inv.skills) push(e, e.kind === "prompt" ? "prompt" : "skill");
   for (const e of inv.mcp) push(e, "mcp");
   for (const e of inv.rules) push(e, "rule");
   return rows;
@@ -341,10 +480,14 @@ export default function SkillBrowseShell({
   const { locale } = useI18n();
   const searchFieldId = useId();
   const browseSectionDomPrefix = useId().replace(/\W/g, "");
+  const aggregateLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const [searchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [scenario, setScenario] = useState<ScenarioKey>("all");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [aggregateVisibleCount, setAggregateVisibleCount] = useState(
+    AGGREGATE_RENDER_PAGE_SIZE,
+  );
   const [selectedEntry, setSelectedEntry] = useState<DetailEntry | null>(null);
   /** 展开中的分组 key；Agent/项目页由列表分组数量同步（仅 1 个标题时默认展开） */
   const [expandedSectionKeys, setExpandedSectionKeys] = useState<
@@ -367,9 +510,10 @@ export default function SkillBrowseShell({
   const projectPaths = useProjectPaths();
   const [aggregateSnapshot, setAggregateSnapshot] =
     useState<AggregateSnapshot | null>(null);
-  const [aggregateLoading, setAggregateLoading] = useState(
-    () => dataSet === "aggregate",
-  );
+  const [detectedAgentTargets, setDetectedAgentTargets] = useState<
+    PromptApplyAgentTarget[]
+  >([]);
+  const [aggregateLoading, setAggregateLoading] = useState(false);
   const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
   const [aiBriefBusy, setAiBriefBusy] = useState(false);
   const [cardContextMenu, setCardContextMenu] = useState<{
@@ -391,11 +535,18 @@ export default function SkillBrowseShell({
   const [aggregateAssetsTab, setAggregateAssetsTab] = useState<"all" | "mine">(
     "all",
   );
+  /** 单个 Agent 页：Agent 原目录 vs AIControls 我的 Skills */
+  const [agentAssetsTab, setAgentAssetsTab] = useState<"all" | "mine">("all");
   const [mySkillsLib, setMySkillsLib] = useState<MySkillsLibraryFile | null>(
+    null,
+  );
+  const [promptLibrary, setPromptLibrary] = useState<PromptLibraryFile | null>(
     null,
   );
   const [mySkillsLoading, setMySkillsLoading] = useState(false);
   const [mySkillsImportBusy, setMySkillsImportBusy] = useState(false);
+  const [aggregateMineKind, setAggregateMineKind] =
+    useState<MineKindFilter>("all");
 
   // ── 重新分类状态 ──
   const [reclassifyMode, setReclassifyMode] = useState<"idle" | "generating" | "reviewing" | "applying">("idle");
@@ -407,6 +558,7 @@ export default function SkillBrowseShell({
     if (dataSet === "aggregate") {
       invalidateCachedAgentGlobalInventory();
       invalidateCachedProjectInventory();
+      clearAggregateSnapshotCache();
     } else if (dataSet === "project" && projectRoot?.trim()) {
       invalidateCachedProjectInventory(projectRoot);
     } else if (dataSet === "skills" && ecosystem) {
@@ -522,6 +674,7 @@ export default function SkillBrowseShell({
 
   useEffect(() => {
     if (dataSet !== "aggregate") setAggregateAssetsTab("all");
+    if (dataSet !== "skills") setAgentAssetsTab("all");
   }, [dataSet]);
 
   // 加载持久化的自定义分类（重新分类确认后保存的）
@@ -536,30 +689,20 @@ export default function SkillBrowseShell({
   }, [refreshKey]);
 
   useEffect(() => {
-    if (dataSet === "aggregate" && aggregateAssetsTab === "mine") {
+    if (
+      (dataSet === "aggregate" && aggregateAssetsTab === "mine") ||
+      (dataSet === "skills" && agentAssetsTab === "mine")
+    ) {
       setFilter("all");
       setScenario("all");
     }
-  }, [dataSet, aggregateAssetsTab]);
+  }, [dataSet, aggregateAssetsTab, agentAssetsTab]);
 
   useEffect(() => {
-    if (dataSet !== "aggregate") return;
-    let cancelled = false;
-    setMySkillsLoading(true);
-    void getMySkillsLibrary()
-      .then((lib) => {
-        if (!cancelled) setMySkillsLib(lib);
-      })
-      .catch(() => {
-        if (!cancelled) setMySkillsLib(null);
-      })
-      .finally(() => {
-        if (!cancelled) setMySkillsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [dataSet, refreshKey]);
+    if (!(dataSet === "aggregate" && aggregateAssetsTab === "mine")) {
+      setAggregateMineKind("all");
+    }
+  }, [dataSet, aggregateAssetsTab]);
 
   useEffect(() => {
     if (!cardContextMenu) return;
@@ -728,14 +871,52 @@ export default function SkillBrowseShell({
   useEffect(() => {
     if (dataSet !== "aggregate") {
       setAggregateLoading(false);
+      setMySkillsLoading(false);
       return;
     }
     let cancelled = false;
-    setAggregateLoading(true);
-    setAggregateSnapshot(null);
+    let frameId: number | null = null;
+    let timerId: number | null = null;
 
-    (async () => {
+    const loadAggregateData = async () => {
+      if (cancelled) return;
+
+      const cached = readAggregateSnapshotCache(projectPaths);
+      if (cancelled) return;
+      if (cached) {
+        setAggregateSnapshot(cached.snapshot);
+        setMySkillsLib(cached.mySkillsLibrary);
+        setPromptLibrary(cached.promptLibrary);
+        setDetectedAgentTargets(
+          cached.snapshot.agents.map((agent) => ({
+            id: agent.id,
+            label: agent.title,
+          })),
+        );
+        if (Date.now() - cached.savedAt < AGGREGATE_SNAPSHOT_CACHE_TTL_MS) {
+          setAggregateLoading(false);
+          setMySkillsLoading(false);
+          return;
+        }
+      } else {
+        setAggregateSnapshot(null);
+        setMySkillsLib(null);
+        setPromptLibrary(null);
+      }
+      setAggregateLoading(true);
+      setMySkillsLoading(true);
+
+      const librariesPromise = Promise.all([getMySkillsLibrary(), getPromptLibrary()])
+        .catch((): [MySkillsLibraryFile | null, PromptLibraryFile | null] => [null, null]);
       const detected = await listDetectedAgents();
+      if (!cancelled) {
+        setDetectedAgentTargets(
+          (detected ?? []).map((agent) => ({
+            id: agent.id,
+            label: AGENT_LABEL_BY_ID[agent.id] ?? agent.label ?? agent.id,
+          })),
+        );
+      }
       const specs =
         detected && detected.length > 0
           ? detected.map((a) => ({
@@ -762,6 +943,7 @@ export default function SkillBrowseShell({
         })),
       );
 
+      const [skillsLibrary, promptsLibrary] = await librariesPromise;
       if (cancelled) return;
 
       const anyInventoryFailed =
@@ -774,7 +956,11 @@ export default function SkillBrowseShell({
         anyInventoryFailed,
       };
       setAggregateSnapshot(snapshot);
+      setMySkillsLib(skillsLibrary);
+      setPromptLibrary(promptsLibrary);
+      writeAggregateSnapshotCache(projectPaths, snapshot, skillsLibrary, promptsLibrary);
       setAggregateLoading(false);
+      setMySkillsLoading(false);
 
       const parts: AgentInventory[] = [];
       for (const a of agentResults) {
@@ -812,10 +998,18 @@ export default function SkillBrowseShell({
         );
       }
       if (!cancelled) setAiBriefBusy(false);
-    })();
+    };
+
+    frameId = window.requestAnimationFrame(() => {
+      timerId = window.setTimeout(() => {
+        void loadAggregateData();
+      }, 0);
+    });
 
     return () => {
       cancelled = true;
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      if (timerId !== null) window.clearTimeout(timerId);
     };
   }, [dataSet, projectPaths, refreshKey, locale]);
 
@@ -837,6 +1031,8 @@ export default function SkillBrowseShell({
           (row) =>
             row.title.toLowerCase().includes(q) ||
             row.desc.toLowerCase().includes(q) ||
+            (row.csCommand?.toLowerCase().includes(q) ?? false) ||
+            (row.cpCommand?.toLowerCase().includes(q) ?? false) ||
             (row.sourcePath?.toLowerCase().includes(q) ?? false),
         );
       }
@@ -865,25 +1061,102 @@ export default function SkillBrowseShell({
       return counts;
     };
 
+    const buildMineRows = (scopeLabel?: string): BrowseRow[] =>
+      (mySkillsLib?.items ?? []).map((it) => {
+        const isPromptSkill = it.sourceKind === "prompt";
+        const command = isPromptSkill
+          ? cpsCommandForSkill(it.title, it.path)
+          : csCommandForSkill(it.title, it.path);
+        return {
+          id: `mine:${it.id}`,
+          sourceId: it.id,
+          title: it.title,
+          desc: it.description,
+          descSource: "source",
+          kind: "skill",
+          ecosystem: ecosystem ?? "cursor",
+          tags: [
+            locale === "zh" ? "我的技能库" : "My skills",
+            ...(scopeLabel ? [scopeLabel] : []),
+            command,
+          ],
+          active: true,
+          sourcePath: it.path,
+          csCommand: command,
+          mineSkillSourceKind: it.sourceKind ?? null,
+          scenario: null,
+        };
+      });
+
+    const buildPublishedPromptRows = (): BrowseRow[] =>
+      (promptLibrary?.items ?? []).flatMap((it) => {
+        const cpCommand = cpCommandForPrompt(it);
+        if (!cpCommand) return [];
+        const desc = it.prompt.trim() || it.outputExample?.trim() || cpCommand;
+        return [{
+          id: `prompt:${it.id}`,
+          sourceId: it.id,
+          title: it.title,
+          desc,
+          descSource: "source",
+          kind: "prompt",
+          ecosystem: "prompt",
+          tags: [locale === "zh" ? "Prompt 库" : "Prompt Library", cpCommand],
+          active: true,
+          cpCommand,
+          promptText: it.prompt,
+          promptCommandName: it.commandName ?? cpCommand.replace(/^\/cp-/, ""),
+          scenario: null,
+        }];
+      });
+
     if (dataSet === "aggregate" && aggregateAssetsTab === "mine") {
-      const mineRows: BrowseRow[] = (mySkillsLib?.items ?? []).map((it) => ({
-        id: `mine:${it.id}`,
-        sourceId: it.id,
-        title: it.title,
-        desc: it.description,
-        descSource: "source",
-        kind: "skill",
-        ecosystem: "cursor",
-        tags: [locale === "zh" ? "我的技能库" : "My skills"],
-        active: true,
-        sourcePath: it.path,
-        scenario: null,
-      }));
+      let mineRows = [...buildMineRows(), ...buildPublishedPromptRows()];
+      if (aggregateMineKind !== "all") {
+        mineRows = mineRows.filter((row) => row.kind === aggregateMineKind);
+      }
       const scenarioCounts = scenarioCountsFromRows(mineRows);
       const customCatCounts = computeCustomCategoryCounts(mineRows);
       const filtered = applyScenarioFilter(applyKindAndQuery(mineRows));
       return {
         sections: [{ key: "mine-grid", title: "", rows: filtered }],
+        scenarioCounts,
+        customCategoryCounts: customCatCounts,
+      };
+    }
+
+    if (dataSet === "skills" && ecosystem && agentAssetsTab === "mine") {
+      if (liveLoading && liveInv === undefined) {
+        return { sections: [], scenarioCounts: empty, customCategoryCounts: null };
+      }
+      const mineInv: AgentInventory = {
+        skills: liveInv?.skills.filter(isCsSkillEntry) ?? [],
+        mcp: [],
+        rules: [],
+      };
+      const mineRows = inventoryToRows(
+        mineInv,
+        ecosystem,
+        AGENT_LABEL_BY_ID[ecosystem] ?? title,
+        locale,
+      ).map((r) => ({
+        ...r,
+        id: `g:${ecosystem}:mine:${r.id}`,
+        tags: [
+          AGENT_LABEL_BY_ID[ecosystem] ?? title,
+          r.kind === "prompt"
+            ? locale === "zh" ? "我的 /cp" : "My /cp"
+            : locale === "zh" ? "我的 /cs" : "My /cs",
+          csCommandForInstalledSkill(r),
+        ],
+        csCommand: r.kind === "prompt" ? undefined : csCommandForInstalledSkill(r),
+        cpCommand: r.kind === "prompt" ? csCommandForInstalledSkill(r) : undefined,
+      }));
+      const scenarioCounts = scenarioCountsFromRows(mineRows);
+      const customCatCounts = computeCustomCategoryCounts(mineRows);
+      const filtered = applyScenarioFilter(applyKindAndQuery(mineRows));
+      return {
+        sections: [{ key: `mine-${ecosystem}`, title: "", rows: filtered }],
         scenarioCounts,
         customCategoryCounts: customCatCounts,
       };
@@ -1044,11 +1317,80 @@ export default function SkillBrowseShell({
     agentProjectScans,
     locale,
     aggregateAssetsTab,
+    agentAssetsTab,
+    aggregateMineKind,
     mySkillsLib,
+    promptLibrary,
     reclassifyMode,
     customCategories,
     customScenario,
   ]);
+
+  const listedTotal = sections.reduce((n, s) => n + s.rows.length, 0);
+
+  const visibleSections = useMemo(() => {
+    if (dataSet !== "aggregate") return sections;
+    let remaining = aggregateVisibleCount;
+    const next: BrowseSection[] = [];
+    for (const section of sections) {
+      if (remaining <= 0) {
+        next.push({ ...section, rows: [] });
+        continue;
+      }
+      const rows = section.rows.slice(0, remaining);
+      remaining -= rows.length;
+      next.push({ ...section, rows });
+    }
+    return next.filter((section) => section.title || section.rows.length > 0);
+  }, [aggregateVisibleCount, dataSet, sections]);
+
+  const visibleAggregateTotal = visibleSections.reduce((n, s) => n + s.rows.length, 0);
+
+  useEffect(() => {
+    setAggregateVisibleCount(AGGREGATE_RENDER_PAGE_SIZE);
+  }, [
+    dataSet,
+    aggregateAssetsTab,
+    aggregateMineKind,
+    filter,
+    scenario,
+    query,
+    customScenario,
+    customCategories,
+  ]);
+
+  useEffect(() => {
+    if (dataSet !== "aggregate") return;
+    if (visibleAggregateTotal >= listedTotal) return;
+    const node = aggregateLoadMoreRef.current;
+    if (!node) return;
+
+    const loadMore = () => {
+      setAggregateVisibleCount((count) =>
+        Math.min(count + AGGREGATE_RENDER_PAGE_SIZE, listedTotal),
+      );
+    };
+
+    if (typeof IntersectionObserver === "undefined") {
+      const onScroll = () => {
+        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 240) {
+          loadMore();
+        }
+      };
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+      return () => window.removeEventListener("scroll", onScroll);
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMore();
+      },
+      { rootMargin: "360px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [dataSet, listedTotal, visibleAggregateTotal]);
 
   useEffect(() => {
     if (dataSet !== "skills" && dataSet !== "project") {
@@ -1078,18 +1420,43 @@ export default function SkillBrowseShell({
   }, [dataSet, sections]);
 
   const copyMenuSections = useMemo(
-    () =>
-      buildCopySkillMenuSections({
+    () => {
+      if (skillCopyTargetModalRow?.kind === "prompt") {
+        return buildPromptApplyMenuSections(detectedAgentTargets);
+      }
+      return buildCopySkillMenuSections({
         dataSet,
         ecosystem,
         projectRoot,
         projectPaths,
         agentProjectScanPaths: agentProjectScans.map((s) => s.path),
-      }),
-    [dataSet, ecosystem, projectRoot, projectPaths, agentProjectScans],
+      });
+    },
+    [
+      dataSet,
+      ecosystem,
+      projectRoot,
+      projectPaths,
+      agentProjectScans,
+      skillCopyTargetModalRow?.kind,
+      detectedAgentTargets,
+    ],
   );
 
-  const listedTotal = sections.reduce((n, s) => n + s.rows.length, 0);
+  const agentAllCount = useMemo(() => {
+    if (dataSet !== "skills" || !ecosystem) return listedTotal;
+    const globalCount = liveInv ? inventoryAssetCount(liveInv) : 0;
+    const projectCount = agentProjectScans.reduce((sum, scan) => {
+      if (!scan.inv) return sum;
+      return sum + inventoryAssetCount(filterInventoryForAgent(ecosystem, scan.inv));
+    }, 0);
+    return globalCount + projectCount;
+  }, [agentProjectScans, dataSet, ecosystem, listedTotal, liveInv]);
+  const agentMineCount =
+    dataSet === "skills" ? (liveInv?.skills.filter(isCsSkillEntry).length ?? 0) : 0;
+  const publishedPromptCount =
+    promptLibrary?.items.filter((item) => cpCommandForPrompt(item) !== null).length ?? 0;
+  const aggregateMineCount = (mySkillsLib?.items.length ?? 0) + publishedPromptCount;
 
   const assetsTotalBadge = useMemo(() => {
     if (dataSet !== "aggregate") return listedTotal;
@@ -1099,9 +1466,8 @@ export default function SkillBrowseShell({
           0,
         )
       : 0;
-    const mineCount = mySkillsLib?.items.length ?? 0;
-    return allCount + mineCount;
-  }, [dataSet, listedTotal, aggregateSnapshot, mySkillsLib]);
+    return allCount + aggregateMineCount;
+  }, [dataSet, listedTotal, aggregateSnapshot, aggregateMineCount]);
 
   const toggleSectionExpanded = (sectionKey: string) => {
     setExpandedSectionKeys((prev) => {
@@ -1125,7 +1491,7 @@ export default function SkillBrowseShell({
 
   const onCardContextMenu = (e: MouseEvent, item: BrowseRow) => {
     const p = item.sourcePath?.trim();
-    if (!p) return;
+    if (!p && item.kind !== "prompt") return;
     e.preventDefault();
     e.stopPropagation();
     const pad = 8;
@@ -1138,7 +1504,9 @@ export default function SkillBrowseShell({
       skillBrowsePathIsDeletableFolder(skillPath) &&
       !isMineRow;
     const approxH =
-      item.kind === "skill"
+      item.kind === "prompt"
+        ? 80
+        : item.kind === "skill"
         ? isMineRow
           ? 132
           : skillHasDelete
@@ -1165,7 +1533,7 @@ export default function SkillBrowseShell({
         title={cardHoverTitle(item)}
         onClick={() => openDetail(item)}
         onContextMenu={
-          item.sourcePath?.trim()
+          item.sourcePath?.trim() || item.kind === "prompt"
             ? (e) => onCardContextMenu(e, item)
             : undefined
         }
@@ -1186,11 +1554,16 @@ export default function SkillBrowseShell({
             title={item.descSource === "ai" ? (locale === "zh" ? "AI 缩略介绍" : "AI brief") : (locale === "zh" ? "原始描述" : "Source description")}
           />
           <span className="skill-card__title">{item.title}</span>
+          {item.csCommand || item.cpCommand ? (
+            <span className="skill-card__command">{item.csCommand ?? item.cpCommand}</span>
+          ) : null}
           <span
             className={`skill-card__kind skill-card__kind--${item.kind}`}
-            aria-label={`${locale === "zh" ? "类型" : "Type"}: ${FILTER_LABEL[item.kind]}`}
+            aria-label={`${locale === "zh" ? "类型" : "Type"}: ${
+              item.kind === "prompt" ? "Prompt" : FILTER_LABEL[item.kind]
+            }`}
           >
-            {FILTER_LABEL[item.kind]}
+            {item.kind === "prompt" ? "Prompt" : FILTER_LABEL[item.kind]}
           </span>
         </div>
         <p className="skill-card__desc">{item.desc}</p>
@@ -1241,7 +1614,38 @@ export default function SkillBrowseShell({
                   >
                     {locale === "zh" ? "我的" : "Mine"}
                     <span className="skill-copy-dialog__tab-badge">
-                      {mySkillsLib?.items.length ?? 0}
+                      {aggregateMineCount}
+                    </span>
+                  </button>
+                </div>
+              </>
+            ) : dataSet === "skills" ? (
+              <>
+                <span className="count-badge">{agentAllCount}</span>
+                <div
+                  className="seg page-header__assets-seg"
+                  role="tablist"
+                  aria-label={locale === "zh" ? "Agent 资产范围" : "Agent asset scope"}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={agentAssetsTab === "all"}
+                    className={`seg__item${agentAssetsTab === "all" ? " active" : ""}`}
+                    onClick={() => setAgentAssetsTab("all")}
+                  >
+                    {locale === "zh" ? "全部" : "All"}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={agentAssetsTab === "mine"}
+                    className={`seg__item${agentAssetsTab === "mine" ? " active" : ""}`}
+                    onClick={() => setAgentAssetsTab("mine")}
+                  >
+                    {locale === "zh" ? "我的" : "Mine"}
+                    <span className="skill-copy-dialog__tab-badge">
+                      {agentMineCount}
                     </span>
                   </button>
                 </div>
@@ -1304,7 +1708,7 @@ export default function SkillBrowseShell({
             {subtitle}
           </p>
         ) : null}
-        {ecosystem && dataSet === "skills" && (liveLoading || liveFailed) ? (
+        {ecosystem && dataSet === "skills" && agentAssetsTab === "all" && (liveLoading || liveFailed) ? (
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {liveLoading
               ? locale === "zh"
@@ -1313,6 +1717,13 @@ export default function SkillBrowseShell({
               : locale === "zh"
                 ? "无法读取用户级全局目录：仍可查看侧栏项目中归属该 Agent 的配置；请在桌面端运行或检查权限。"
                 : "Failed to read global directory. You can still view project-scoped entries."}
+          </p>
+        ) : null}
+        {ecosystem && dataSet === "skills" && agentAssetsTab === "mine" ? (
+          <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
+            {locale === "zh"
+              ? "这里筛选当前 Agent 用户全局目录中已安装的 /cs-* Skills。需要新增时，先在「全部」页的「我的」中应用到 Agent。"
+              : "Filters /cs-* Skills already installed in this agent's global directory. To add one, apply it from Mine in the All page."}
           </p>
         ) : null}
         {dataSet === "project" &&
@@ -1332,8 +1743,8 @@ export default function SkillBrowseShell({
           <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.85rem" }}>
             {aggregateAssetsTab === "mine"
               ? locale === "zh"
-                ? "「我的」技能保存在本应用数据目录。在「全部」中右键技能选「复制到…」，在「用户全局」下选「AIControls『我的』技能库」即可加入；在「我的」中右键「应用到…」可部署到各 Agent 全局或侧栏项目。"
-                : "My skills live under app data. In All view, right-click → Copy to… → pick AIControls \"Mine\" under the Global tab; from Mine, Apply to deploy to agents and projects."
+                ? "这里包含 AIControls「我的」Skills，以及 Prompt 库中已发布为 /cp-* 的 Prompts。"
+                : "Includes AIControls My Skills and prompts published as /cp-* from Prompt Library."
               : aggregateLoading || aggregateSnapshot === null
                 ? locale === "zh"
                   ? "正在汇总各 Agent 用户级全局目录与侧栏已添加项目…"
@@ -1371,6 +1782,25 @@ export default function SkillBrowseShell({
               />
             </label>
             {dataSet === "aggregate" && aggregateAssetsTab === "mine" ? (
+              <div
+                className="seg"
+                role="tablist"
+                aria-label={locale === "zh" ? "我的资产类型筛选" : "Mine asset type filter"}
+              >
+                {(["all", "skill", "prompt"] as MineKindFilter[]).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={aggregateMineKind === k}
+                    className={`seg__item${aggregateMineKind === k ? " active" : ""}`}
+                    onClick={() => setAggregateMineKind(k)}
+                  >
+                    {k === "all" ? (locale === "zh" ? "全部" : "All") : MINE_KIND_LABEL[k]}
+                  </button>
+                ))}
+              </div>
+            ) : dataSet === "skills" && agentAssetsTab === "mine" ? (
               <span className="muted toolbar__mine-kind-hint">
                 {locale === "zh" ? "仅 Skill" : "Skills only"}
               </span>
@@ -1545,7 +1975,7 @@ export default function SkillBrowseShell({
         </div>
       </div>
 
-      {sections.map((sec) => {
+      {visibleSections.map((sec) => {
         if (!sec.title) {
           return (
             <div key={sec.key} className="skill-grid">
@@ -1590,6 +2020,19 @@ export default function SkillBrowseShell({
           </section>
         );
       })}
+
+      {dataSet === "aggregate" && visibleAggregateTotal < listedTotal ? (
+        <div
+          ref={aggregateLoadMoreRef}
+          className="muted"
+          style={{ padding: "1rem 0 1.5rem", textAlign: "center" }}
+          role="status"
+        >
+          {locale === "zh"
+            ? `继续向下滚动加载更多（${visibleAggregateTotal}/${listedTotal}）`
+            : `Scroll down to load more (${visibleAggregateTotal}/${listedTotal})`}
+        </div>
+      ) : null}
 
       {cardContextMenu
         ? createPortal(
@@ -1782,6 +2225,19 @@ export default function SkillBrowseShell({
                   ) : null}
                 </>
               ) : null}
+              {cardContextMenu.row.kind === "prompt" && cardContextMenu.row.cpCommand ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="card-context-menu__item"
+                  onClick={() => {
+                    setSkillCopyTargetModalRow(cardContextMenu.row);
+                    setCardContextMenu(null);
+                  }}
+                >
+                  {locale === "zh" ? "应用到 Agent…" : "Apply to Agent…"}
+                </button>
+              ) : null}
             </div>,
             document.body,
           )
@@ -1793,7 +2249,11 @@ export default function SkillBrowseShell({
               row={skillCopyTargetModalRow}
               sections={copyMenuSections}
               dialogTitle={
-                skillCopyTargetModalRow.id.startsWith("mine:")
+                skillCopyTargetModalRow.kind === "prompt"
+                  ? locale === "zh"
+                    ? "应用到 Agent…"
+                    : "Apply to Agent…"
+                  : skillCopyTargetModalRow.id.startsWith("mine:")
                   ? locale === "zh"
                     ? "应用到…"
                     : "Apply to…"
@@ -1803,9 +2263,29 @@ export default function SkillBrowseShell({
               onChoose={(payload) => {
                 const row = skillCopyTargetModalRow;
                 const src = row.sourcePath?.trim();
-                if (!src) return;
                 void (async () => {
                   setSkillCopyTargetModalRow(null);
+                  if (row.kind === "prompt") {
+                    if (payload.destKind !== "promptGlobal") return;
+                    try {
+                      await applyPromptCommandToAgent({
+                        agentId: payload.agentId,
+                        title: row.title,
+                        prompt: row.promptText ?? row.desc,
+                        commandName: row.promptCommandName ?? row.cpCommand ?? row.title,
+                      });
+                      setShellToast({
+                        at: Date.now(),
+                        message: locale === "zh" ? "已应用到 Agent" : "Applied to agent",
+                      });
+                    } catch (err) {
+                      window.alert(
+                        `${locale === "zh" ? "应用失败" : "Apply failed"}: ${String(err)}`,
+                      );
+                    }
+                    return;
+                  }
+                  if (!src) return;
                   if (payload.destKind === "myLibrary") {
                     try {
                       await addSkillToMyLibrary(src);
@@ -1824,6 +2304,7 @@ export default function SkillBrowseShell({
                     }
                     return;
                   }
+                  if (payload.destKind === "promptGlobal") return;
 
                   const r = await copySkillPackage({
                     sourcePath: src,
@@ -1835,6 +2316,11 @@ export default function SkillBrowseShell({
                         ? payload.projectRoot
                         : undefined,
                     onConflict: "suffix",
+                    folderNamePrefix: row.id.startsWith("mine:")
+                      ? row.mineSkillSourceKind === "prompt"
+                        ? "cps-"
+                        : "cs-"
+                      : null,
                   });
                   if ("error" in r) {
                     window.alert(`${locale === "zh" ? "复制失败" : "Copy failed"}: ${r.error}`);
@@ -1879,7 +2365,8 @@ export default function SkillBrowseShell({
       />
 
       {listedTotal === 0 &&
-      !(ecosystem && dataSet === "skills" && (liveLoading || liveFailed)) &&
+      !(ecosystem && dataSet === "skills" && agentAssetsTab === "all" && (liveLoading || liveFailed)) &&
+      !(ecosystem && dataSet === "skills" && agentAssetsTab === "mine" && liveLoading) &&
       !(dataSet === "project" && projectLoading) &&
       !(
         dataSet === "aggregate" &&
@@ -1901,15 +2388,19 @@ export default function SkillBrowseShell({
             : dataSet === "aggregate"
               ? aggregateAssetsTab === "mine"
                 ? locale === "zh"
-                  ? "「我的」中暂无技能。可使用上方「导入技能文件夹」，或在「全部」中右键「复制到…」→「用户全局」下选「AIControls『我的』技能库」。"
-                  : 'No skills in Mine yet. Use "Import skill folder", or in All view right-click → Copy to… → pick AIControls "Mine" under the Global tab.'
+                  ? "「我的」中暂无匹配资产。可导入 Skill，或在 Prompt 库中发布 /cp Prompt。"
+                  : 'No matching assets in Mine. Import a Skill, or publish a /cp prompt from Prompt Library.'
                 : locale === "zh"
                   ? "未发现任何条目，或没有符合当前筛选的结果。"
                   : "No entries found, or no matches for current filters."
               : ecosystem && dataSet === "skills"
-                ? locale === "zh"
-                  ? "没有符合条件的全局条目。"
-                  : "No matching global entries."
+                ? agentAssetsTab === "mine"
+                  ? locale === "zh"
+                    ? "当前 Agent 的用户全局目录中还没有 /cs-* Skills。请先从「全部」页的「我的」中应用到该 Agent。"
+                    : "No /cs-* Skills are installed in this agent's global directory yet. Apply one from Mine in the All page first."
+                  : locale === "zh"
+                    ? "没有符合条件的全局条目。"
+                    : "No matching global entries."
                 : locale === "zh"
                   ? "没有符合当前筛选条件的条目。"
                   : "No entries match current filters."}

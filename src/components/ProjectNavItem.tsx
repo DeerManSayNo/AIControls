@@ -13,9 +13,16 @@ function folderBasename(path: string): string {
 type Props = {
   projectPath: string;
   isCurrent: boolean;
+  pendingActivePath?: string | null;
+  onPendingActivePath?: (path: string) => void;
 };
 
-export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
+export default function ProjectNavItem({
+  projectPath,
+  isCurrent,
+  pendingActivePath = null,
+  onPendingActivePath,
+}: Props) {
   const { locale } = useI18n();
   const navigate = useNavigate();
   const to = `/project?path=${encodeURIComponent(projectPath)}`;
@@ -73,8 +80,12 @@ export default function ProjectNavItem({ projectPath, isCurrent }: Props) {
       >
         <NavLink
           to={to}
-          className={() => `side-nav-link${isCurrent ? " active" : ""}`}
+          className={() =>
+            `side-nav-link${(pendingActivePath ? pendingActivePath === to : isCurrent) ? " active" : ""}`
+          }
           title={projectPath}
+          onPointerDown={() => onPendingActivePath?.(to)}
+          onClick={() => onPendingActivePath?.(to)}
         >
           <span className="side-nav-link__icon">
             <NavIconFolder />
