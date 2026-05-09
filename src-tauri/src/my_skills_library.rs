@@ -70,8 +70,8 @@ fn write_library_atomic(app: &AppHandle, lib: &MySkillsLibraryFile) -> Result<()
     if path.exists() {
         let _ = fs::copy(&path, bak);
     }
-    let json =
-        serde_json::to_string_pretty(lib).map_err(|e| format!("序列化「我的技能」清单失败：{e}"))?;
+    let json = serde_json::to_string_pretty(lib)
+        .map_err(|e| format!("序列化「我的技能」清单失败：{e}"))?;
     fs::write(&tmp, json).map_err(|e| format!("写入临时文件失败：{e}"))?;
     fs::rename(&tmp, &path).map_err(|e| format!("保存「我的技能」清单失败：{e}"))?;
     Ok(())
@@ -121,12 +121,8 @@ fn find_skill_md(dir: &Path) -> Option<PathBuf> {
 }
 
 fn read_skill_folder_metadata(skill_root: &Path) -> Result<(String, String), String> {
-    let md_path = find_skill_md(skill_root).ok_or_else(|| {
-        format!(
-            "技能文件夹内未找到 SKILL.md：{}",
-            skill_root.display()
-        )
-    })?;
+    let md_path = find_skill_md(skill_root)
+        .ok_or_else(|| format!("技能文件夹内未找到 SKILL.md：{}", skill_root.display()))?;
     let content = fs::read_to_string(&md_path).unwrap_or_default();
     let title = extract_skill_declared_name(&content).unwrap_or_else(|| {
         skill_root
@@ -161,7 +157,10 @@ pub fn load_my_skills_library(app: &AppHandle) -> Result<MySkillsLibraryFile, St
     Ok(normalized)
 }
 
-pub fn add_skill_to_my_library(app: &AppHandle, source_path: String) -> Result<MySkillItem, String> {
+pub fn add_skill_to_my_library(
+    app: &AppHandle,
+    source_path: String,
+) -> Result<MySkillItem, String> {
     let trimmed = source_path.trim().to_string();
     if trimmed.is_empty() {
         return Err("路径为空".into());

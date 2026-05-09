@@ -12,13 +12,7 @@ const API_URL: &str = "https://api.deepseek.com/chat/completions";
 const MODEL: &str = "deepseek-chat";
 
 const SCENARIO_SLUGS: &[&str] = &[
-    "dev",
-    "office",
-    "creative",
-    "data",
-    "network",
-    "ops",
-    "collab",
+    "dev", "office", "creative", "data", "network", "ops", "collab",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +34,10 @@ struct MessageBody {
 
 fn normalize_slug(raw: &str) -> Option<String> {
     let s = raw.trim().to_lowercase();
-    SCENARIO_SLUGS.iter().find(|&&x| x == s.as_str()).map(|s| (*s).to_string())
+    SCENARIO_SLUGS
+        .iter()
+        .find(|&&x| x == s.as_str())
+        .map(|s| (*s).to_string())
 }
 
 fn extract_json_object(text: &str) -> Result<Value, String> {
@@ -48,8 +45,12 @@ fn extract_json_object(text: &str) -> Result<Value, String> {
     if let Ok(v) = serde_json::from_str::<Value>(t) {
         return Ok(v);
     }
-    let start = t.find('{').ok_or_else(|| "响应中未找到 JSON 对象".to_string())?;
-    let end = t.rfind('}').ok_or_else(|| "响应中未找到 JSON 对象结尾".to_string())?;
+    let start = t
+        .find('{')
+        .ok_or_else(|| "响应中未找到 JSON 对象".to_string())?;
+    let end = t
+        .rfind('}')
+        .ok_or_else(|| "响应中未找到 JSON 对象结尾".to_string())?;
     let slice = &t[start..=end];
     serde_json::from_str(slice).map_err(|e| format!("解析模型 JSON 失败：{e}"))
 }
@@ -77,10 +78,7 @@ async fn chat_completion(
     });
     if json_object_mode {
         if let Some(o) = body.as_object_mut() {
-            o.insert(
-                "response_format".into(),
-                json!({"type": "json_object"}),
-            );
+            o.insert("response_format".into(), json!({"type": "json_object"}));
         }
     }
 
@@ -182,16 +180,11 @@ async fn classify_batch(
         lines.join("\n")
     );
 
-    let raw = chat_completion(
-        api_key,
-        &classify_system_prompt(),
-        &user,
-        true,
-        800,
-    )
-    .await?;
+    let raw = chat_completion(api_key, &classify_system_prompt(), &user, true, 800).await?;
     let v = extract_json_object(&raw)?;
-    let obj = v.as_object().ok_or_else(|| "模型输出不是 JSON 对象".to_string())?;
+    let obj = v
+        .as_object()
+        .ok_or_else(|| "模型输出不是 JSON 对象".to_string())?;
 
     let mut out = HashMap::new();
     for (id, val) in obj {
@@ -218,9 +211,7 @@ async fn classify_batch_fill_missing(
         }
         match classify_batch(api_key, &[e.clone()]).await {
             Ok(m) => delta.extend(m),
-            Err(_) => {
-                /* 单次失败则跳过该 id，下次扫描仍会尝试 */
-            }
+            Err(_) => { /* 单次失败则跳过该 id，下次扫描仍会尝试 */ }
         }
     }
     Ok(delta)
@@ -317,9 +308,7 @@ async fn summarize_batch_fill_missing(
         }
         match summarize_batch(api_key, &[e.clone()], locale).await {
             Ok(m) => delta.extend(m),
-            Err(_) => {
-                /* 单次失败则跳过该 id，下次扫描仍会尝试 */
-            }
+            Err(_) => { /* 单次失败则跳过该 id，下次扫描仍会尝试 */ }
         }
     }
     Ok(delta)
@@ -489,15 +478,11 @@ pub async fn enrich_resource_from_url(
         return Err("链接为空".into());
     }
 
-    let user = format!("链接：{}", serde_json::to_string(&url).map_err(|e| e.to_string())?);
-    let raw = chat_completion(
-        &api_key,
-        &resource_url_system_prompt(),
-        &user,
-        true,
-        600,
-    )
-    .await?;
+    let user = format!(
+        "链接：{}",
+        serde_json::to_string(&url).map_err(|e| e.to_string())?
+    );
+    let raw = chat_completion(&api_key, &resource_url_system_prompt(), &user, true, 600).await?;
     let v = extract_json_object(&raw)?;
 
     let title = v
@@ -785,7 +770,10 @@ fn progress_system_prompt() -> String {
         .to_string()
 }
 
-pub async fn estimate_project_progress(app: &AppHandle, root: String) -> Result<ProjectProgressResult, String> {
+pub async fn estimate_project_progress(
+    app: &AppHandle,
+    root: String,
+) -> Result<ProjectProgressResult, String> {
     let api_key = storage::load_deepseek_api_key(app)?
         .filter(|k| !k.is_empty())
         .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
@@ -803,18 +791,30 @@ pub async fn estimate_project_progress(app: &AppHandle, root: String) -> Result<
     if pkg_path.is_file() {
         if let Ok(content) = std::fs::read_to_string(&pkg_path) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("0.0.0");
-                let desc = val.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                let deps_count = val.get("dependencies")
+                let name = val
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let version = val
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0.0.0");
+                let desc = val
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let deps_count = val
+                    .get("dependencies")
                     .and_then(|v| v.as_object())
                     .map(|o| o.len())
                     .unwrap_or(0);
-                let dev_deps_count = val.get("devDependencies")
+                let dev_deps_count = val
+                    .get("devDependencies")
                     .and_then(|v| v.as_object())
                     .map(|o| o.len())
                     .unwrap_or(0);
-                let scripts_count = val.get("scripts")
+                let scripts_count = val
+                    .get("scripts")
                     .and_then(|v| v.as_object())
                     .map(|o| o.len())
                     .unwrap_or(0);
@@ -852,8 +852,23 @@ pub async fn estimate_project_progress(app: &AppHandle, root: String) -> Result<
     }
 
     // 3. Key directory existence checks
-    let key_dirs = ["src", "src-tauri", "app", "pages", "components", "lib", "test", "tests", "__tests__", "docs", "public", "dist", "build"];
-    let existing: Vec<&str> = key_dirs.iter()
+    let key_dirs = [
+        "src",
+        "src-tauri",
+        "app",
+        "pages",
+        "components",
+        "lib",
+        "test",
+        "tests",
+        "__tests__",
+        "docs",
+        "public",
+        "dist",
+        "build",
+    ];
+    let existing: Vec<&str> = key_dirs
+        .iter()
         .filter(|d| root_path.join(d).is_dir())
         .copied()
         .collect();
@@ -877,7 +892,13 @@ pub async fn estimate_project_progress(app: &AppHandle, root: String) -> Result<
             stats.comment_lines,
             stats.blank_lines,
             stats.files,
-            stats.languages.iter().take(5).map(|l| format!("{}({})", l.language, l.code_lines)).collect::<Vec<_>>().join(", ")
+            stats
+                .languages
+                .iter()
+                .take(5)
+                .map(|l| format!("{}({})", l.language, l.code_lines))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
@@ -907,12 +928,14 @@ pub async fn estimate_project_progress(app: &AppHandle, root: String) -> Result<
     let raw = chat_completion(&api_key, &progress_system_prompt(), &user, true, 300).await?;
     let v = extract_json_object(&raw)?;
 
-    let progress = v.get("progress")
+    let progress = v
+        .get("progress")
         .and_then(|x| x.as_u64())
         .unwrap_or(50)
         .min(100) as u32;
 
-    let summary = v.get("summary")
+    let summary = v
+        .get("summary")
         .and_then(|x| x.as_str())
         .unwrap_or("无法评估")
         .trim()

@@ -269,4 +269,3 @@ pub fn save_prompt_library(app: &AppHandle, lib: PromptLibraryFile) -> Result<()
     let normalized = validate_and_normalize(lib)?;
     write_library_atomic(app, &normalized)
 }
-

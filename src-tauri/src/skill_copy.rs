@@ -20,10 +20,7 @@ pub fn global_skill_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> 
         ],
         "claude" => vec![home.join(".claude/skills")],
         "trae" => vec![home.join(".trae/skills")],
-        "qoder" => vec![
-            home.join(".qoder/skills"),
-            home.join(".qoderwork/skills"),
-        ],
+        "qoder" => vec![home.join(".qoder/skills"), home.join(".qoderwork/skills")],
         "kiro" => vec![home.join(".kiro/skills")],
         _ => return Err(format!("未知 agent: {agent_id}")),
     })
@@ -51,7 +48,9 @@ pub struct VisibleProjectSkillBucket {
 }
 
 /// 仅返回「项目根下已存在对应 Agent 目录」时的复制桶（如仅有 `.cursor`/`.claude` 则不会列出 Trae/Qoder 等）。
-pub fn list_visible_project_skill_buckets(project_root: &str) -> Result<Vec<VisibleProjectSkillBucket>, String> {
+pub fn list_visible_project_skill_buckets(
+    project_root: &str,
+) -> Result<Vec<VisibleProjectSkillBucket>, String> {
     let root = Path::new(project_root.trim())
         .canonicalize()
         .map_err(|e| format!("无法解析项目路径: {e}"))?;
@@ -74,7 +73,10 @@ pub fn list_visible_project_skill_buckets(project_root: &str) -> Result<Vec<Visi
 }
 
 /// Project-relative skill roots for `agent_id` (bucket_index matches this slice).
-pub fn project_skill_parent_dirs(project_root: &Path, agent_id: &str) -> Result<Vec<PathBuf>, String> {
+pub fn project_skill_parent_dirs(
+    project_root: &Path,
+    agent_id: &str,
+) -> Result<Vec<PathBuf>, String> {
     let root = project_root
         .canonicalize()
         .map_err(|e| format!("无法解析项目根目录: {e}"))?;
@@ -147,10 +149,8 @@ fn copy_tree_merge_contents(from: &Path, to: &Path) -> Result<(), String> {
     if !from.is_dir() {
         return Err(format!("源不是目录: {}", from.display()));
     }
-    fs::create_dir_all(to)
-        .map_err(|e| format!("创建目录失败 {e}: {}", to.display()))?;
-    for ent in fs::read_dir(from)
-        .map_err(|e| format!("读取目录失败 {e}: {}", from.display()))?
+    fs::create_dir_all(to).map_err(|e| format!("创建目录失败 {e}: {}", to.display()))?;
+    for ent in fs::read_dir(from).map_err(|e| format!("读取目录失败 {e}: {}", from.display()))?
     {
         let ent = ent.map_err(|e| format!("读取目录项失败: {e}"))?;
         let fp = ent.path();
@@ -164,13 +164,8 @@ fn copy_tree_merge_contents(from: &Path, to: &Path) -> Result<(), String> {
             if let Some(parent) = tp.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
             }
-            fs::copy(&fp, &tp).map_err(|e| {
-                format!(
-                    "复制文件失败 {e}: {} → {}",
-                    fp.display(),
-                    tp.display()
-                )
-            })?;
+            fs::copy(&fp, &tp)
+                .map_err(|e| format!("复制文件失败 {e}: {} → {}", fp.display(), tp.display()))?;
         }
     }
     Ok(())
@@ -178,7 +173,10 @@ fn copy_tree_merge_contents(from: &Path, to: &Path) -> Result<(), String> {
 
 enum SkillCopySource {
     /// Recursively copy everything under this directory into a new folder under dest parent.
-    Directory { root: PathBuf, folder_base_name: String },
+    Directory {
+        root: PathBuf,
+        folder_base_name: String,
+    },
     /// `SKILL.md` (or variant) sits directly under a `skills` container; materialize `dest_parent/<name>/`.
     LooseMarkdown {
         skill_md: PathBuf,
@@ -188,8 +186,7 @@ enum SkillCopySource {
 
 fn resolve_skill_copy_source(path: &Path) -> Result<SkillCopySource, String> {
     let path = if path.exists() {
-        path
-            .canonicalize()
+        path.canonicalize()
             .map_err(|e| format!("无法解析路径: {e}"))?
     } else {
         return Err("路径不存在".into());
@@ -290,11 +287,7 @@ pub fn perform_copy(
 ) -> Result<String, String> {
     let root_path = project_root.map(Path::new);
     let dest_parent_uncanon = resolve_dest_parent(kind, agent_id, bucket_index, root_path)?;
-    let guard = if kind == "project" {
-        root_path
-    } else {
-        None
-    };
+    let guard = if kind == "project" { root_path } else { None };
     let final_dir = copy_skill_package_into_parent(
         &dest_parent_uncanon,
         source_path,
@@ -311,8 +304,7 @@ pub fn copy_skill_package_into_parent(
     on_conflict_suffix: bool,
     project_root_for_guard: Option<&Path>,
 ) -> Result<PathBuf, String> {
-    fs::create_dir_all(dest_parent_uncanon)
-        .map_err(|e| format!("无法创建目标目录: {e}"))?;
+    fs::create_dir_all(dest_parent_uncanon).map_err(|e| format!("无法创建目标目录: {e}"))?;
 
     let dest_parent = dest_parent_uncanon
         .canonicalize()
@@ -366,16 +358,13 @@ fn finish_skill_copy_under_dest(
             let fname = skill_md
                 .file_name()
                 .ok_or_else(|| "无效文件名".to_string())?;
-            fs::copy(&skill_md, dest_dir.join(fname)).map_err(|e| format!("复制 SKILL 文件失败: {e}"))?;
+            fs::copy(&skill_md, dest_dir.join(fname))
+                .map_err(|e| format!("复制 SKILL 文件失败: {e}"))?;
 
             let sibling = parent.join(&dest_folder_name);
             if sibling.is_dir() {
-                let can_dest = dest_dir
-                    .canonicalize()
-                    .map_err(|e| format!("{e}"))?;
-                let can_sib = sibling
-                    .canonicalize()
-                    .map_err(|e| format!("{e}"))?;
+                let can_dest = dest_dir.canonicalize().map_err(|e| format!("{e}"))?;
+                let can_sib = sibling.canonicalize().map_err(|e| format!("{e}"))?;
                 if can_sib != can_dest {
                     copy_tree_merge_contents(&sibling, &dest_dir)?;
                 }
@@ -395,12 +384,8 @@ pub fn perform_delete_skill(source_path: &str) -> Result<(), String> {
     let sk = resolve_skill_copy_source(Path::new(trimmed))?;
     match sk {
         SkillCopySource::Directory { root, .. } => {
-            fs::remove_dir_all(&root).map_err(|e| {
-                format!(
-                    "删除技能目录失败 ({e}): {}",
-                    root.to_string_lossy()
-                )
-            })?;
+            fs::remove_dir_all(&root)
+                .map_err(|e| format!("删除技能目录失败 ({e}): {}", root.to_string_lossy()))?;
         }
         SkillCopySource::LooseMarkdown { .. } => {
             return Err(

@@ -427,12 +427,7 @@ async fn ensure_repo_ready(
     owner: &str,
     repo_name: &str,
 ) -> Result<String, String> {
-    create_user_repo(
-        access_token,
-        repo_name,
-        "由 AIControls 自动备份创建",
-    )
-    .await?;
+    create_user_repo(access_token, repo_name, "由 AIControls 自动备份创建").await?;
     let r = get_repo(access_token, owner, repo_name).await?;
     Ok(r.default_branch.unwrap_or_else(|| "master".to_string()))
 }
@@ -466,10 +461,7 @@ async fn get_file_sha(
         return Err(format!("读取远端文件失败（HTTP {status}）：{text}"));
     }
     let v: Value = serde_json::from_str(&text).map_err(|e| format!("解析文件元数据失败：{e}"))?;
-    let sha = v
-        .get("sha")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string());
+    let sha = v.get("sha").and_then(|x| x.as_str()).map(|s| s.to_string());
     Ok(sha)
 }
 
@@ -627,12 +619,8 @@ async fn ensure_fresh_access_token(app: &AppHandle) -> Result<GiteeTokenFile, St
     if rt.is_empty() {
         return Err("访问令牌已过期且无 refresh_token，请重新授权。".into());
     }
-    let tr = refresh_access_token(
-        app_cfg.client_id.trim(),
-        app_cfg.client_secret.trim(),
-        rt,
-    )
-    .await?;
+    let tr =
+        refresh_access_token(app_cfg.client_id.trim(), app_cfg.client_secret.trim(), rt).await?;
     let expires_at_ms = tr.expires_in.map(|sec| now_ms() + (sec as i64) * 1000);
     t.access_token = tr.access_token;
     if let Some(nr) = tr.refresh_token {
@@ -768,14 +756,8 @@ pub async fn restore_from_repo_url(app: AppHandle, repo_url: String) -> Result<S
         } else {
             format!("{base_path}/{fname}")
         };
-        let maybe = get_repo_file_bytes(
-            &token.access_token,
-            &owner,
-            &repo,
-            &remote_path,
-            &branch,
-        )
-        .await?;
+        let maybe =
+            get_repo_file_bytes(&token.access_token, &owner, &repo, &remote_path, &branch).await?;
         if let Some(bytes) = maybe {
             let local = local_dir.join(fname);
             std::fs::write(local, bytes).map_err(|e| format!("写入本地文件失败：{e}"))?;
@@ -790,7 +772,11 @@ pub async fn restore_from_repo_url(app: AppHandle, repo_url: String) -> Result<S
 
     Ok(format!(
         "已从 {owner}/{repo} 的 `{}` 载入 {} 个文件（缺失 {} 个）。",
-        if base_path.is_empty() { "." } else { &base_path },
+        if base_path.is_empty() {
+            "."
+        } else {
+            &base_path
+        },
         restored,
         missing
     ))
@@ -866,14 +852,7 @@ async fn backup_now_inner(app: AppHandle, force: bool) -> Result<String, String>
         "# AIControls 备份\n\n本目录由 AIControls 客户端同步。\n\n{list}\n\n最近同步（客户端本地时间戳 ms）：{}。\n",
         now_ms()
     );
-    let sha = get_file_sha(
-        &token.access_token,
-        owner,
-        repo,
-        &readme_path,
-        &branch,
-    )
-    .await?;
+    let sha = get_file_sha(&token.access_token, owner, repo, &readme_path, &branch).await?;
     create_or_update_repo_file(
         &token.access_token,
         owner,

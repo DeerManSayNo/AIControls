@@ -10,12 +10,31 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "AIControls",
         "width": 1200,
         "height": 800
+      },
+      {
+        "label": "float-ball",
+        "title": "AIControls Float Ball",
+        "width": 224,
+        "height": 286,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

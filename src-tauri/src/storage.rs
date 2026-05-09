@@ -19,6 +19,12 @@ struct DeepseekSettingsFile {
     api_key: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct FloatBallPosition {
+    pub x: i32,
+    pub y: i32,
+}
+
 fn ensure_parent(path: &Path) -> Result<(), String> {
     if let Some(p) = path.parent() {
         fs::create_dir_all(p).map_err(|e| e.to_string())?;
@@ -36,6 +42,10 @@ fn deepseek_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_local_dir(app)?.join("deepseek_settings.json"))
 }
 
+fn float_ball_position_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("float_ball_position.json"))
+}
+
 fn scenario_map_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_local_dir(app)?.join("asset_scenarios.json"))
 }
@@ -50,7 +60,9 @@ fn brief_map_path(app: &AppHandle, locale: &str) -> Result<PathBuf, String> {
 }
 
 pub fn get_deepseek_settings_public(app: &AppHandle) -> Result<DeepseekSettingsPublic, String> {
-    let configured = load_deepseek_api_key(app)?.map(|s| !s.is_empty()).unwrap_or(false);
+    let configured = load_deepseek_api_key(app)?
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
     Ok(DeepseekSettingsPublic {
         api_key_configured: configured,
     })
@@ -78,9 +90,31 @@ pub fn save_deepseek_api_key(app: &AppHandle, api_key: String) -> Result<(), Str
     let file = DeepseekSettingsFile {
         api_key: api_key.trim().to_string(),
     };
-    let json =
-        serde_json::to_string_pretty(&file).map_err(|e| format!("序列化配置失败：{e}"))?;
+    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("序列化配置失败：{e}"))?;
     fs::write(path, json).map_err(|e| format!("写入 DeepSeek 配置失败：{e}"))?;
+    Ok(())
+}
+
+pub fn load_float_ball_position(app: &AppHandle) -> Result<Option<FloatBallPosition>, String> {
+    let path = float_ball_position_path(app)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let position: FloatBallPosition =
+        serde_json::from_str(&text).map_err(|e| format!("读取悬浮球位置失败：{e}"))?;
+    Ok(Some(position))
+}
+
+pub fn save_float_ball_position(
+    app: &AppHandle,
+    position: FloatBallPosition,
+) -> Result<(), String> {
+    let path = float_ball_position_path(app)?;
+    ensure_parent(&path)?;
+    let json = serde_json::to_string_pretty(&position)
+        .map_err(|e| format!("序列化悬浮球位置失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入悬浮球位置失败：{e}"))?;
     Ok(())
 }
 
@@ -114,8 +148,8 @@ pub fn load_brief_map(app: &AppHandle, locale: &str) -> Result<HashMap<String, S
             let legacy = app_local_dir(app)?.join("asset_briefs_zh.json");
             if legacy.is_file() {
                 let text = fs::read_to_string(&legacy).map_err(|e| e.to_string())?;
-                let v: HashMap<String, String> =
-                    serde_json::from_str(&text).map_err(|e| format!("读取缩略介绍缓存失败：{e}"))?;
+                let v: HashMap<String, String> = serde_json::from_str(&text)
+                    .map_err(|e| format!("读取缩略介绍缓存失败：{e}"))?;
                 return Ok(v);
             }
         }
@@ -145,8 +179,7 @@ pub fn merge_brief_map(
 fn save_scenario_map(app: &AppHandle, map: &HashMap<String, String>) -> Result<(), String> {
     let path = scenario_map_path(app)?;
     ensure_parent(&path)?;
-    let json =
-        serde_json::to_string_pretty(map).map_err(|e| format!("序列化分类缓存失败：{e}"))?;
+    let json = serde_json::to_string_pretty(map).map_err(|e| format!("序列化分类缓存失败：{e}"))?;
     fs::write(path, json).map_err(|e| format!("写入分类缓存失败：{e}"))?;
     Ok(())
 }
@@ -180,7 +213,9 @@ fn custom_categories_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_local_dir(app)?.join("custom_categories.json"))
 }
 
-pub fn load_custom_categories(app: &AppHandle) -> Result<Vec<crate::deepseek::CustomCategory>, String> {
+pub fn load_custom_categories(
+    app: &AppHandle,
+) -> Result<Vec<crate::deepseek::CustomCategory>, String> {
     let path = custom_categories_path(app)?;
     if !path.is_file() {
         return Ok(vec![]);
@@ -197,8 +232,8 @@ pub fn save_custom_categories(
 ) -> Result<(), String> {
     let path = custom_categories_path(app)?;
     ensure_parent(&path)?;
-    let json =
-        serde_json::to_string_pretty(categories).map_err(|e| format!("序列化自定义分类失败：{e}"))?;
+    let json = serde_json::to_string_pretty(categories)
+        .map_err(|e| format!("序列化自定义分类失败：{e}"))?;
     fs::write(path, json).map_err(|e| format!("写入自定义分类失败：{e}"))?;
     Ok(())
 }
@@ -450,8 +485,7 @@ pub fn save_gitee_backup_fingerprint(
 ) -> Result<(), String> {
     let path = gitee_backup_fingerprint_path(app)?;
     ensure_parent(&path)?;
-    let json =
-        serde_json::to_string_pretty(fp).map_err(|e| format!("序列化备份指纹失败：{e}"))?;
+    let json = serde_json::to_string_pretty(fp).map_err(|e| format!("序列化备份指纹失败：{e}"))?;
     fs::write(path, json).map_err(|e| format!("写入备份指纹失败：{e}"))?;
     Ok(())
 }

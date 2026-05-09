@@ -67,10 +67,7 @@ fn validate_and_normalize(mut lib: ResourceLibraryFile) -> Result<ResourceLibrar
         lib.version = CURRENT_VERSION;
     }
     if lib.version > CURRENT_VERSION {
-        return Err(format!(
-            "资源库版本过高（{}），请升级应用。",
-            lib.version
-        ));
+        return Err(format!("资源库版本过高（{}），请升级应用。", lib.version));
     }
     lib.version = CURRENT_VERSION;
 
@@ -109,8 +106,7 @@ fn write_library_atomic(app: &AppHandle, lib: &ResourceLibraryFile) -> Result<()
     if path.exists() {
         let _ = fs::copy(&path, bak);
     }
-    let json =
-        serde_json::to_string_pretty(lib).map_err(|e| format!("序列化资源库失败：{e}"))?;
+    let json = serde_json::to_string_pretty(lib).map_err(|e| format!("序列化资源库失败：{e}"))?;
     fs::write(&tmp, json).map_err(|e| format!("写入临时文件失败：{e}"))?;
     fs::rename(&tmp, &path).map_err(|e| format!("保存资源库失败：{e}"))?;
     Ok(())

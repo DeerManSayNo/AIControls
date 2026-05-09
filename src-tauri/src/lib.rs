@@ -11,8 +11,38 @@ mod scan;
 mod skill_copy;
 mod storage;
 
+use serde::Serialize;
 use scan::AgentInventory;
-use tauri::AppHandle;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent,
+};
+
+const MAIN_WINDOW_LABEL: &str = "main";
+const FLOAT_BALL_WINDOW_LABEL: &str = "float-ball";
+const FLOAT_BALL_HOVER_EVENT: &str = "float-ball-hover-state";
+const FLOAT_BALL_HOVER_POLL_MS: u64 = 80;
+const TRAY_SHOW_MAIN_ID: &str = "show-main";
+const TRAY_QUIT_ID: &str = "quit";
+const FLOAT_BALL_COLLAPSED_WIDTH: u32 = 46;
+const FLOAT_BALL_COLLAPSED_HEIGHT: u32 = 46;
+const FLOAT_BALL_EXPANDED_WIDTH: u32 = 224;
+const FLOAT_BALL_EXPANDED_HEIGHT: u32 = 286;
+const FLOAT_BALL_DEFAULT_RIGHT_OFFSET: i32 = 68;
+const FLOAT_BALL_DEFAULT_BOTTOM_OFFSET: i32 = 220;
+const FLOAT_BALL_SAFE_BOTTOM_MARGIN: i32 = 80;
+
+#[derive(Clone, Copy, PartialEq, Serialize)]
+struct FloatBallHoverPayload {
+    inside: bool,
+    x: f64,
+    y: f64,
+}
 
 fn latest_file_mtime_in_dir(root: &std::path::Path) -> Result<i64, String> {
     use std::fs;
@@ -67,6 +97,267 @@ fn latest_file_mtime_in_dir(root: &std::path::Path) -> Result<i64, String> {
         .map_err(|_| "无法解析修改时间".to_string())?
         .as_millis();
     Ok(ms as i64)
+}
+
+fn configure_float_ball(app: &AppHandle) {
+    let Some(ball) = app.get_webview_window(FLOAT_BALL_WINDOW_LABEL) else {
+        return;
+    };
+
+    let _ = ball.set_always_on_top(true);
+    let _ = ball.set_visible_on_all_workspaces(true);
+    let _ = ball.set_skip_taskbar(true);
+    let _ = ball.set_ignore_cursor_events(true);
+
+    let scale_factor = ball.scale_factor().unwrap_or(1.0);
+    let collapsed_size = tauri::PhysicalSize::new(
+        (FLOAT_BALL_COLLAPSED_WIDTH as f64 * scale_factor)
+            .round()
+            .max(1.0) as u32,
+        (FLOAT_BALL_COLLAPSED_HEIGHT as f64 * scale_factor)
+            .round()
+            .max(1.0) as u32,
+    );
+    let expanded_size = tauri::PhysicalSize::new(
+        (FLOAT_BALL_EXPANDED_WIDTH as f64 * scale_factor)
+            .round()
+            .max(1.0) as u32,
+        (FLOAT_BALL_EXPANDED_HEIGHT as f64 * scale_factor)
+            .round()
+            .max(1.0) as u32,
+    );
+    let _ = ball.set_size(expanded_size);
+    let expanded_from_collapsed = |position: PhysicalPosition<i32>| {
+        PhysicalPosition::new(
+            position.x - (expanded_size.width as i32 - collapsed_size.width as i32) / 2,
+            position.y - (expanded_size.height as i32 - collapsed_size.height as i32),
+        )
+    };
+
+    if let Ok(Some(saved)) = storage::load_float_ball_position(app) {
+        let saved = PhysicalPosition::new(saved.x, saved.y);
+        let position = clamp_float_ball_position(app, saved, Some(collapsed_size));
+        let _ = ball.set_position(expanded_from_collapsed(position));
+        return;
+    }
+
+    let monitor = ball
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+
+    if let Some(monitor) = monitor {
+        let position = monitor.position();
+        let size = monitor.size();
+        let x = position.x + size.width as i32 - FLOAT_BALL_DEFAULT_RIGHT_OFFSET;
+        let y = position.y + size.height as i32 - FLOAT_BALL_DEFAULT_BOTTOM_OFFSET;
+        let default_position = PhysicalPosition::new(x.max(position.x), y.max(position.y));
+        let position = clamp_float_ball_position(
+            app,
+            default_position,
+            Some(collapsed_size),
+        );
+        let _ = ball.set_position(expanded_from_collapsed(position));
+    }
+}
+
+fn start_float_ball_hover_watcher(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_inside: Option<bool> = None;
+        let mut last_payload_key: Option<(bool, i32, i32)> = None;
+        let mut menu_open = false;
+
+        loop {
+            let payload = app
+                .get_webview_window(FLOAT_BALL_WINDOW_LABEL)
+                .and_then(|ball| {
+                    let cursor = app.cursor_position().ok()?;
+                    let position = ball.outer_position().ok()?;
+                    let size = ball.outer_size().ok()?;
+                    let scale_factor = ball.scale_factor().unwrap_or(1.0);
+                    let left = position.x as f64;
+                    let top = position.y as f64;
+                    let right = left + size.width as f64;
+                    let bottom = top + size.height as f64;
+                    let collapsed_width =
+                        FLOAT_BALL_COLLAPSED_WIDTH as f64 * scale_factor;
+                    let collapsed_height =
+                        FLOAT_BALL_COLLAPSED_HEIGHT as f64 * scale_factor;
+                    let ball_left = left + (size.width as f64 - collapsed_width) / 2.0;
+                    let ball_top = bottom - collapsed_height;
+                    let ball_right = ball_left + collapsed_width;
+                    let ball_bottom = bottom;
+
+                    let inside_window = cursor.x >= left
+                        && cursor.x <= right
+                        && cursor.y >= top
+                        && cursor.y <= bottom;
+                    let inside_collapsed_ball = cursor.x >= ball_left
+                        && cursor.x <= ball_right
+                        && cursor.y >= ball_top
+                        && cursor.y <= ball_bottom;
+                    let inside = if menu_open {
+                        inside_window
+                    } else {
+                        inside_collapsed_ball
+                    };
+
+                    if Some(inside) != last_inside {
+                        let _ = ball.set_ignore_cursor_events(!inside);
+                    }
+
+                    let payload = FloatBallHoverPayload {
+                        inside,
+                        x: (cursor.x - left) / scale_factor,
+                        y: (cursor.y - top) / scale_factor,
+                    };
+                    let payload_key = (inside, payload.x.round() as i32, payload.y.round() as i32);
+                    if Some(payload_key) != last_payload_key {
+                        let _ = ball.emit(FLOAT_BALL_HOVER_EVENT, payload);
+                        last_payload_key = Some(payload_key);
+                    }
+
+                    Some(payload)
+                })
+                .unwrap_or(FloatBallHoverPayload {
+                    inside: false,
+                    x: -1.0,
+                    y: -1.0,
+                });
+
+            menu_open = payload.inside;
+            last_inside = Some(payload.inside);
+            tokio::time::sleep(std::time::Duration::from_millis(
+                FLOAT_BALL_HOVER_POLL_MS,
+            ))
+            .await;
+        }
+    });
+}
+
+fn clamp_float_ball_position(
+    app: &AppHandle,
+    position: PhysicalPosition<i32>,
+    window_size: Option<tauri::PhysicalSize<u32>>,
+) -> PhysicalPosition<i32> {
+    let Some(window_size) = window_size else {
+        return position;
+    };
+
+    let monitors = app.available_monitors().unwrap_or_default();
+    let monitor = monitors
+        .iter()
+        .find(|monitor| {
+            let monitor_position = monitor.position();
+            let monitor_size = monitor.size();
+            let center_x = position.x + window_size.width as i32 / 2;
+            let center_y = position.y + window_size.height as i32 / 2;
+            center_x >= monitor_position.x
+                && center_x <= monitor_position.x + monitor_size.width as i32
+                && center_y >= monitor_position.y
+                && center_y <= monitor_position.y + monitor_size.height as i32
+        })
+        .or_else(|| monitors.first());
+
+    let Some(monitor) = monitor else {
+        return position;
+    };
+
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let max_x = monitor_position.x + monitor_size.width as i32 - window_size.width as i32;
+    let safe_bottom_margin = (FLOAT_BALL_SAFE_BOTTOM_MARGIN as f64 * window_size.height as f64
+        / FLOAT_BALL_COLLAPSED_HEIGHT as f64)
+        .round() as i32;
+    let max_y = monitor_position.y + monitor_size.height as i32
+        - window_size.height as i32
+        - safe_bottom_margin.max(0);
+
+    PhysicalPosition::new(
+        position
+            .x
+            .clamp(monitor_position.x, max_x.max(monitor_position.x)),
+        position
+            .y
+            .clamp(monitor_position.y, max_y.max(monitor_position.y)),
+    )
+}
+
+fn save_float_ball_position(app: &AppHandle, position: PhysicalPosition<i32>) {
+    let _ = storage::save_float_ball_position(
+        app,
+        storage::FloatBallPosition {
+            x: position.x,
+            y: position.y,
+        },
+    );
+}
+
+fn collapsed_float_ball_position(
+    window: &tauri::Window,
+    position: PhysicalPosition<i32>,
+) -> PhysicalPosition<i32> {
+    let Ok(size) = window.outer_size() else {
+        return position;
+    };
+    let scale_factor = window.scale_factor().unwrap_or(1.0);
+    let collapsed_width = (FLOAT_BALL_COLLAPSED_WIDTH as f64 * scale_factor).round() as i32;
+    let collapsed_height = (FLOAT_BALL_COLLAPSED_HEIGHT as f64 * scale_factor).round() as i32;
+    let width = size.width as i32;
+    let height = size.height as i32;
+
+    if width <= collapsed_width + 2 && height <= collapsed_height + 2 {
+        return position;
+    }
+
+    PhysicalPosition::new(
+        position.x + (width - collapsed_width).max(0) / 2,
+        position.y + (height - collapsed_height).max(0),
+    )
+}
+
+fn collapsed_float_ball_size(window: &tauri::Window) -> Option<tauri::PhysicalSize<u32>> {
+    let scale_factor = window.scale_factor().ok()?;
+    Some(tauri::PhysicalSize::new(
+        (FLOAT_BALL_COLLAPSED_WIDTH as f64 * scale_factor)
+            .round()
+            .max(1.0) as u32,
+        (FLOAT_BALL_COLLAPSED_HEIGHT as f64 * scale_factor)
+            .round()
+            .max(1.0) as u32,
+    ))
+}
+
+fn setup_tray(app: &mut tauri::App, is_quitting: Arc<AtomicBool>) -> tauri::Result<()> {
+    let show_main = MenuItem::with_id(app, TRAY_SHOW_MAIN_ID, "显示主窗口", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_main, &quit])?;
+
+    let mut tray = TrayIconBuilder::with_id("aicontrols-tray")
+        .menu(&menu)
+        .tooltip("AIControls")
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            TRAY_SHOW_MAIN_ID => {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            TRAY_QUIT_ID => {
+                is_quitting.store(true, Ordering::SeqCst);
+                app.exit(0);
+            }
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -145,7 +436,8 @@ async fn deepseek_summarize_inventory(
     inventory: AgentInventory,
     locale: Option<String>,
 ) -> Result<AgentInventory, String> {
-    deepseek::summarize_inventory_missing(&app, inventory, locale.unwrap_or_else(|| "zh".into())).await
+    deepseek::summarize_inventory_missing(&app, inventory, locale.unwrap_or_else(|| "zh".into()))
+        .await
 }
 
 #[tauri::command]
@@ -420,13 +712,15 @@ async fn read_package_version(root: String) -> Result<Option<String>, String> {
         }
         let content = std::fs::read_to_string(&pkg_path)
             .map_err(|e| format!("读取 package.json 失败: {e}"))?;
-        let val: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("解析 package.json 失败: {e}"))?;
-        let version = val.get("version")
-            .and_then(|v| v.as_str())
-            .map(|v| {
-                if v.starts_with('v') { v.to_string() } else { format!("v{v}") }
-            });
+        let val: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| format!("解析 package.json 失败: {e}"))?;
+        let version = val.get("version").and_then(|v| v.as_str()).map(|v| {
+            if v.starts_with('v') {
+                v.to_string()
+            } else {
+                format!("v{v}")
+            }
+        });
         Ok(version)
     })
     .await
@@ -435,7 +729,10 @@ async fn read_package_version(root: String) -> Result<Option<String>, String> {
 
 /// AI 评估 MVP 项目的完成进度。
 #[tauri::command]
-async fn estimate_project_progress(app: AppHandle, root: String) -> Result<deepseek::ProjectProgressResult, String> {
+async fn estimate_project_progress(
+    app: AppHandle,
+    root: String,
+) -> Result<deepseek::ProjectProgressResult, String> {
     deepseek::estimate_project_progress(&app, root).await
 }
 
@@ -511,9 +808,13 @@ async fn git_contributors(root: String) -> Result<Vec<Contributor>, String> {
         let mut list = Vec::new();
         for line in raw.lines() {
             let line = line.trim();
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
             // Parse: "  count\tName <email>"
-            let Some(tab_pos) = line.find('\t') else { continue };
+            let Some(tab_pos) = line.find('\t') else {
+                continue;
+            };
             let count_str = line[..tab_pos].trim();
             let info = &line[tab_pos + 1..];
             let commits: u32 = count_str.parse().unwrap_or(0);
@@ -529,7 +830,11 @@ async fn git_contributors(root: String) -> Result<Vec<Contributor>, String> {
             } else {
                 (info.to_string(), String::new())
             };
-            list.push(Contributor { name, email, commits });
+            list.push(Contributor {
+                name,
+                email,
+                commits,
+            });
         }
         Ok(list)
     })
@@ -589,7 +894,10 @@ async fn git_check_local_changes(root: String) -> Result<LocalChangeStatus, Stri
             parts.join("，")
         };
 
-        Ok(LocalChangeStatus { has_changes, details })
+        Ok(LocalChangeStatus {
+            has_changes,
+            details,
+        })
     })
     .await
     .map_err(|e| format!("检查任务失败: {e}"))?
@@ -695,9 +1003,9 @@ async fn detect_project_git_info(root: String) -> Result<ProjectGitInfo, String>
         let branch = git_command_output(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
         let branches = git_branches(dir);
         let remote_url = git_command_output(dir, &["config", "--get", "remote.origin.url"]);
-        let remote_name = remote_url.as_ref().and_then(|_| {
-            git_command_output(dir, &["config", "--get", "remote.origin.name"])
-        });
+        let remote_name = remote_url
+            .as_ref()
+            .and_then(|_| git_command_output(dir, &["config", "--get", "remote.origin.name"]));
         let last_commit_hash = git_command_output(dir, &["log", "-1", "--format=%h"]);
         let last_commit_message = git_command_output(dir, &["log", "-1", "--format=%s"]);
         let last_commit_author = git_command_output(dir, &["log", "-1", "--format=%an"]);
@@ -856,9 +1164,7 @@ fn save_resource_library(
 }
 
 #[tauri::command]
-fn get_my_skills_library(
-    app: AppHandle,
-) -> Result<my_skills_library::MySkillsLibraryFile, String> {
+fn get_my_skills_library(app: AppHandle) -> Result<my_skills_library::MySkillsLibraryFile, String> {
     my_skills_library::load_my_skills_library(&app)
 }
 
@@ -917,9 +1223,37 @@ fn get_gitee_sync_status(app: AppHandle) -> Result<gitee::GiteeSyncStatusPublic,
 }
 
 pub fn run() {
+    let is_quitting = Arc::new(AtomicBool::new(false));
+    let close_is_quitting = Arc::clone(&is_quitting);
+    let tray_is_quitting = Arc::clone(&is_quitting);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .on_window_event(move |window, event| {
+            if window.label() == MAIN_WINDOW_LABEL {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    if !close_is_quitting.load(Ordering::SeqCst) {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                }
+            }
+            if window.label() == FLOAT_BALL_WINDOW_LABEL {
+                if let WindowEvent::Moved(position) = event {
+                    let position = collapsed_float_ball_position(window, *position);
+                    let position = clamp_float_ball_position(
+                        window.app_handle(),
+                        position,
+                        collapsed_float_ball_size(window),
+                    );
+                    save_float_ball_position(window.app_handle(), position);
+                }
+            }
+        })
+        .setup(move |app| {
+            setup_tray(app, Arc::clone(&tray_is_quitting))?;
+            configure_float_ball(app.handle());
+            start_float_ball_hover_watcher(app.handle().clone());
             gitee::sync_ui_schedule_next_in_secs(300);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

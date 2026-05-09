@@ -122,7 +122,10 @@ fn parse_github_repo_url(input: &str) -> Result<(String, String, String, Option<
 fn github_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("AIControls"));
-    headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.github+json"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/vnd.github+json"),
+    );
     headers
 }
 
@@ -132,9 +135,8 @@ async fn fetch_repo_tree(
     branch: &str,
 ) -> Result<Vec<GithubTreeEntry>, String> {
     let branch_enc = urlencoding::encode(branch);
-    let url = format!(
-        "https://api.github.com/repos/{owner}/{repo}/git/trees/{branch_enc}?recursive=1"
-    );
+    let url =
+        format!("https://api.github.com/repos/{owner}/{repo}/git/trees/{branch_enc}?recursive=1");
     let cli = reqwest::Client::new();
     let resp = cli
         .get(url)
@@ -143,7 +145,10 @@ async fn fetch_repo_tree(
         .await
         .map_err(|e| format!("请求 GitHub 失败: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("读取仓库目录失败（HTTP {}）", resp.status().as_u16()));
+        return Err(format!(
+            "读取仓库目录失败（HTTP {}）",
+            resp.status().as_u16()
+        ));
     }
     let data = resp
         .json::<GithubTreeResponse>()
@@ -163,7 +168,10 @@ fn path_matches_base(path: &str, base_path: Option<&str>) -> bool {
     path == b || path.starts_with(&format!("{b}/"))
 }
 
-fn detect_skill_paths(tree: &[GithubTreeEntry], base_path: Option<&str>) -> Vec<GithubSkillCandidate> {
+fn detect_skill_paths(
+    tree: &[GithubTreeEntry],
+    base_path: Option<&str>,
+) -> Vec<GithubSkillCandidate> {
     let mut out: Vec<GithubSkillCandidate> = Vec::new();
     let mut seen = std::collections::BTreeSet::<String>::new();
     for ent in tree {
@@ -191,7 +199,11 @@ fn detect_skill_paths(tree: &[GithubTreeEntry], base_path: Option<&str>) -> Vec<
             dir.rsplit('/').next().unwrap_or("Skill").to_string()
         };
         out.push(GithubSkillCandidate {
-            id: if dir.is_empty() { ".".into() } else { dir.clone() },
+            id: if dir.is_empty() {
+                ".".into()
+            } else {
+                dir.clone()
+            },
             path: if dir.is_empty() { ".".into() } else { dir },
             title,
         });
@@ -200,12 +212,16 @@ fn detect_skill_paths(tree: &[GithubTreeEntry], base_path: Option<&str>) -> Vec<
     out
 }
 
-async fn fetch_file_content(owner: &str, repo: &str, branch: &str, file_path: &str) -> Result<Vec<u8>, String> {
+async fn fetch_file_content(
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    file_path: &str,
+) -> Result<Vec<u8>, String> {
     let path_enc = urlencoding::encode(file_path);
     let branch_enc = urlencoding::encode(branch);
-    let url = format!(
-        "https://api.github.com/repos/{owner}/{repo}/contents/{path_enc}?ref={branch_enc}"
-    );
+    let url =
+        format!("https://api.github.com/repos/{owner}/{repo}/contents/{path_enc}?ref={branch_enc}");
     let cli = reqwest::Client::new();
     let resp = cli
         .get(url)
@@ -242,7 +258,9 @@ async fn fetch_file_content(owner: &str, repo: &str, branch: &str, file_path: &s
         .map_err(|e| format!("解码文件失败（{file_path}）: {e}"))
 }
 
-pub async fn detect_github_repo_skills(repo_url: &str) -> Result<GithubSkillDetectionResult, String> {
+pub async fn detect_github_repo_skills(
+    repo_url: &str,
+) -> Result<GithubSkillDetectionResult, String> {
     let (owner, repo, branch, base_path) = parse_github_repo_url(repo_url)?;
     let tree = fetch_repo_tree(&owner, &repo, &branch).await?;
     let skills = detect_skill_paths(&tree, base_path.as_deref());

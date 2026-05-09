@@ -151,15 +151,11 @@ fn detect_claude(home: &Path) -> bool {
 }
 
 fn detect_trae(home: &Path) -> bool {
-    app_bundle_exists("Trae")
-        || app_bundle_exists("Trae CN")
-        || home.join(".trae").is_dir()
+    app_bundle_exists("Trae") || app_bundle_exists("Trae CN") || home.join(".trae").is_dir()
 }
 
 fn detect_qoder(home: &Path) -> bool {
-    app_bundle_exists("Qoder")
-        || home.join(".qoder").is_dir()
-        || home.join(".qoderwork").is_dir()
+    app_bundle_exists("Qoder") || home.join(".qoder").is_dir() || home.join(".qoderwork").is_dir()
 }
 
 fn detect_kiro(home: &Path) -> bool {
@@ -851,11 +847,7 @@ fn merge_mcp_from_json_value(v: &Value, list: &mut Vec<AssetEntry>) {
     merge_mcp_from_json_value_at(v, None, list);
 }
 
-fn merge_mcp_from_json_value_at(
-    v: &Value,
-    source_json: Option<&Path>,
-    list: &mut Vec<AssetEntry>,
-) {
+fn merge_mcp_from_json_value_at(v: &Value, source_json: Option<&Path>, list: &mut Vec<AssetEntry>) {
     if let Some(m) = v.get("mcpServers").and_then(|x| x.as_object()) {
         parse_mcp_object_at(m, source_json, list);
     }
@@ -916,11 +908,7 @@ pub fn scan_project_directory(root: &Path) -> Result<AgentInventory, String> {
 
     dedupe_mcp(&mut mcp);
 
-    Ok(AgentInventory {
-        skills,
-        mcp,
-        rules,
-    })
+    Ok(AgentInventory { skills, mcp, rules })
 }
 
 pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
@@ -1053,11 +1041,7 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
 
     dedupe_mcp(&mut mcp);
 
-    Ok(AgentInventory {
-        skills,
-        mcp,
-        rules,
-    })
+    Ok(AgentInventory { skills, mcp, rules })
 }
 
 fn dedupe_mcp(items: &mut Vec<AssetEntry>) {
@@ -1074,7 +1058,13 @@ fn dedupe_mcp(items: &mut Vec<AssetEntry>) {
     }
 }
 
-fn walk_doc_files(dir: &Path, depth: usize, max_depth: usize, candidates: &[&str], out: &mut Vec<(PathBuf, String)>) {
+fn walk_doc_files(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    candidates: &[&str],
+    out: &mut Vec<(PathBuf, String)>,
+) {
     if depth > max_depth || !dir.is_dir() {
         return;
     }
@@ -1107,14 +1097,21 @@ fn walk_doc_files(dir: &Path, depth: usize, max_depth: usize, candidates: &[&str
 /// Returns `(filename, content)`.
 pub fn read_skill_document(path: &Path) -> Result<(String, String), String> {
     if path.is_dir() {
-        let candidates = ["SKILL.md", "skill.md", "CLAUDE.md", "claude.md", "README.md", "readme.md"];
+        let candidates = [
+            "SKILL.md",
+            "skill.md",
+            "CLAUDE.md",
+            "claude.md",
+            "README.md",
+            "readme.md",
+        ];
 
         // First pass: exact match at root of directory
         for name in &candidates {
             let file_path = path.join(name);
             if file_path.is_file() {
-                let content = fs::read_to_string(&file_path)
-                    .map_err(|e| format!("读取文件失败: {e}"))?;
+                let content =
+                    fs::read_to_string(&file_path).map_err(|e| format!("读取文件失败: {e}"))?;
                 return Ok((name.to_string(), content));
             }
         }
@@ -1129,8 +1126,8 @@ pub fn read_skill_document(path: &Path) -> Result<(String, String), String> {
             a_idx.cmp(&b_idx)
         });
         if let Some((file_path, fname)) = found.into_iter().next() {
-            let content = fs::read_to_string(&file_path)
-                .map_err(|e| format!("读取文件失败: {e}"))?;
+            let content =
+                fs::read_to_string(&file_path).map_err(|e| format!("读取文件失败: {e}"))?;
             return Ok((fname, content));
         }
 
@@ -1140,8 +1137,7 @@ pub fn read_skill_document(path: &Path) -> Result<(String, String), String> {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("读取文件失败: {e}"))?;
+        let content = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {e}"))?;
         Ok((fname, content))
     } else {
         Err("路径不存在".to_string())
