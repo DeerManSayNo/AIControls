@@ -37,6 +37,7 @@ import {
   addSkillToMyLibrary,
   getMySkillsLibrary,
   removeMySkill,
+  type MySkillItem,
   type MySkillsLibraryFile,
 } from "../api/mySkills";
 import {
@@ -174,6 +175,59 @@ function csCommandForInstalledSkill(row: BrowseRow): string {
 function cpCommandForPrompt(item: PromptItem): string | null {
   if (!item.commandEnabled || !item.commandName?.trim()) return null;
   return `/cp-${slugifyCommandSegment(item.commandName)}`;
+}
+
+function promptDescriptionForCard(item: PromptItem, fallback: string): string {
+  return (
+    item.prompt.trim() ||
+    item.note?.trim() ||
+    item.outputExample?.trim() ||
+    fallback
+  );
+}
+
+function mineAssetEntryFromSkill(item: MySkillItem): AssetEntry {
+  return {
+    id: item.id,
+    kind: "skill",
+    title: item.title,
+    description: item.description,
+    path: item.path,
+    active: true,
+    scenario: null,
+    brief_zh: null,
+    brief_en: null,
+    skill_extra_files: null,
+  };
+}
+
+function mineAssetEntryFromPrompt(item: PromptItem, command: string): AssetEntry {
+  return {
+    id: item.id,
+    kind: "prompt",
+    title: item.title,
+    description: promptDescriptionForCard(item, command),
+    path: command,
+    active: true,
+    scenario: null,
+    brief_zh: null,
+    brief_en: null,
+    skill_extra_files: null,
+  };
+}
+
+function mineLibrariesToInventory(
+  mySkillsLib: MySkillsLibraryFile | null,
+  promptLibrary: PromptLibraryFile | null,
+): AgentInventory {
+  const skills = [
+    ...(mySkillsLib?.items ?? []).map(mineAssetEntryFromSkill),
+    ...(promptLibrary?.items ?? []).flatMap((item) => {
+      const command = cpCommandForPrompt(item);
+      return command ? [mineAssetEntryFromPrompt(item, command)] : [];
+    }),
+  ];
+  return { skills, mcp: [], rules: [] };
 }
 
 /** HTML `id` 安全片段（来自路径等分组 key） */
@@ -516,6 +570,13 @@ export default function SkillBrowseShell({
   const [aggregateLoading, setAggregateLoading] = useState(false);
   const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
   const [aiBriefBusy, setAiBriefBusy] = useState(false);
+  const [mineAiBusy, setMineAiBusy] = useState(false);
+  const [mineScenarioMap, setMineScenarioMap] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  const [mineBriefMap, setMineBriefMap] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const [cardContextMenu, setCardContextMenu] = useState<{
     x: number;
     y: number;
@@ -652,7 +713,7 @@ export default function SkillBrowseShell({
       (projectLoading || aiScenarioBusy || aiBriefBusy)) ||
     (dataSet === "aggregate" &&
       aggregateAssetsTab === "mine" &&
-      mySkillsLoading) ||
+      (mySkillsLoading || mineAiBusy)) ||
     (dataSet === "aggregate" &&
       aggregateAssetsTab === "all" &&
       (aggregateLoading || aiScenarioBusy || aiBriefBusy));
@@ -1013,6 +1074,50 @@ export default function SkillBrowseShell({
     };
   }, [dataSet, projectPaths, refreshKey, locale]);
 
+  useEffect(() => {
+    if (dataSet !== "aggregate") {
+      setMineAiBusy(false);
+      return;
+    }
+
+    const mineInv = mineLibrariesToInventory(mySkillsLib, promptLibrary);
+    if (inventoryAssetCount(mineInv) === 0) {
+      setMineScenarioMap(new Map());
+      setMineBriefMap(new Map());
+      setMineAiBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setMineAiBusy(true);
+
+    (async () => {
+      const cfg = await getDeepseekSettings();
+      if (cancelled || !cfg?.apiKeyConfigured) return;
+
+      const classified = await deepseekClassifyInventory(mineInv);
+      if (cancelled) return;
+      if (classified) {
+        setMineScenarioMap(scenarioMapFromInventory(classified));
+      }
+
+      const summarized = await deepseekSummarizeInventory(
+        classified ?? mineInv,
+        locale,
+      );
+      if (cancelled) return;
+      if (summarized) {
+        setMineBriefMap(briefMapFromInventory(summarized, locale));
+      }
+    })().finally(() => {
+      if (!cancelled) setMineAiBusy(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataSet, mySkillsLib, promptLibrary, refreshKey, locale]);
+
   const { sections, scenarioCounts, customCategoryCounts } = useMemo((): {
     sections: BrowseSection[];
     scenarioCounts: Record<ScenarioKey, number>;
@@ -1067,12 +1172,13 @@ export default function SkillBrowseShell({
         const command = isPromptSkill
           ? cpsCommandForSkill(it.title, it.path)
           : csCommandForSkill(it.title, it.path);
+        const brief = mineBriefMap.get(it.id)?.trim();
         return {
           id: `mine:${it.id}`,
           sourceId: it.id,
           title: it.title,
-          desc: it.description,
-          descSource: "source",
+          desc: brief || it.description,
+          descSource: brief ? "ai" : "source",
           kind: "skill",
           ecosystem: ecosystem ?? "cursor",
           tags: [
@@ -1084,7 +1190,7 @@ export default function SkillBrowseShell({
           sourcePath: it.path,
           csCommand: command,
           mineSkillSourceKind: it.sourceKind ?? null,
-          scenario: null,
+          scenario: mineScenarioMap.get(it.id) ?? null,
         };
       });
 
@@ -1092,13 +1198,14 @@ export default function SkillBrowseShell({
       (promptLibrary?.items ?? []).flatMap((it) => {
         const cpCommand = cpCommandForPrompt(it);
         if (!cpCommand) return [];
-        const desc = it.prompt.trim() || it.outputExample?.trim() || cpCommand;
+        const brief = mineBriefMap.get(it.id)?.trim();
+        const desc = brief || promptDescriptionForCard(it, cpCommand);
         return [{
           id: `prompt:${it.id}`,
           sourceId: it.id,
           title: it.title,
           desc,
-          descSource: "source",
+          descSource: brief ? "ai" : "source",
           kind: "prompt",
           ecosystem: "prompt",
           tags: [locale === "zh" ? "Prompt 库" : "Prompt Library", cpCommand],
@@ -1106,7 +1213,7 @@ export default function SkillBrowseShell({
           cpCommand,
           promptText: it.prompt,
           promptCommandName: it.commandName ?? cpCommand.replace(/^\/cp-/, ""),
-          scenario: null,
+          scenario: mineScenarioMap.get(it.id) ?? null,
         }];
       });
 
@@ -1321,6 +1428,8 @@ export default function SkillBrowseShell({
     aggregateMineKind,
     mySkillsLib,
     promptLibrary,
+    mineBriefMap,
+    mineScenarioMap,
     reclassifyMode,
     customCategories,
     customScenario,
@@ -1357,6 +1466,8 @@ export default function SkillBrowseShell({
     query,
     customScenario,
     customCategories,
+    mineBriefMap,
+    mineScenarioMap,
   ]);
 
   useEffect(() => {
@@ -1957,13 +2068,17 @@ export default function SkillBrowseShell({
             )}
           </div>
           {dataSet === "aggregate" && aggregateAssetsTab === "all" ? null : null}
-          {aiScenarioBusy || aiBriefBusy ? (
+          {aiScenarioBusy || aiBriefBusy || mineAiBusy ? (
             <p
               className="muted toolbar__deepseek-status"
               role="status"
               aria-live="polite"
             >
-              {aiScenarioBusy
+              {mineAiBusy
+                ? locale === "zh"
+                  ? "DeepSeek 正在为「我的」资产补全场景分类与卡片简介，请稍候…"
+                  : "DeepSeek is classifying and summarizing Mine assets…"
+                : aiScenarioBusy
                 ? locale === "zh"
                   ? "DeepSeek 正在为尚未写入本地缓存的条目补全场景分类，请稍候…"
                   : "DeepSeek is classifying uncached entries…"

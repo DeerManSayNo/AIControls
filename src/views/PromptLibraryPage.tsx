@@ -8,6 +8,7 @@ import {
   type PromptLibraryFile,
   type PromptType,
 } from "../api/prompts";
+import { getMySkillsLibrary } from "../api/mySkills";
 import { useI18n } from "../i18n/provider";
 
 const TYPE_META: Record<PromptType, { label: string; rootName: string }> = {
@@ -62,6 +63,28 @@ function displayPromptCommand(commandName: string): string {
   return `/cp-${commandName}`;
 }
 
+function reconcileConvertedSkillStatus(
+  lib: PromptLibraryFile,
+  mySkillIds: Set<string>,
+): { library: PromptLibraryFile; changed: boolean } {
+  let changed = false;
+  const items = lib.items.map((item) => {
+    const convertedSkillId = item.convertedSkillId?.trim();
+    if (!convertedSkillId || mySkillIds.has(convertedSkillId)) return item;
+
+    changed = true;
+    return {
+      ...item,
+      convertedSkillId: null,
+    };
+  });
+
+  return {
+    library: changed ? { ...lib, items } : lib,
+    changed,
+  };
+}
+
 export default function PromptLibraryPage() {
   const { locale } = useI18n();
   const typeLabel = (t: PromptType) => (locale === "zh" ? TYPE_META[t].label : TYPE_LABEL_EN[t]);
@@ -109,9 +132,23 @@ export default function PromptLibraryPage() {
     const loadPromptLibrary = async () => {
       try {
         setLoading(true);
-        const lib = ensureRootFolders(await getPromptLibrary());
+        const [rawLib, mySkillsLib] = await Promise.all([
+          getPromptLibrary(),
+          getMySkillsLibrary(),
+        ]);
+        const lib = ensureRootFolders(rawLib);
+        const mySkillIds = new Set(
+          mySkillsLib.items.map((item) => item.id.trim()).filter(Boolean),
+        );
+        const { library: syncedLib, changed } = reconcileConvertedSkillStatus(
+          lib,
+          mySkillIds,
+        );
+        if (changed) {
+          await savePromptLibrary(syncedLib);
+        }
         if (!cancelled) {
-          setLibrary(lib);
+          setLibrary(syncedLib);
           setActiveFolderId(activeType);
         }
       } catch (e) {
