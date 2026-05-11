@@ -537,6 +537,17 @@ export default function ShellPage({ subtitle }: Props) {
   ) => {
     const pending = pendingGithubImport;
     if (!pending) return;
+    if (payload.destKind === "promptGlobal") {
+      setHomeToast({
+        at: Date.now(),
+        kind: "error",
+        message:
+          locale === "zh"
+            ? "从 GitHub 导入的 Skill 仅支持「用户全局」「项目」或「我的 Skills」。"
+            : "GitHub skills can only import to global, project, or My Skills.",
+      });
+      return;
+    }
     void (async () => {
       setGithubImportBusy(true);
       let success = 0;
@@ -555,16 +566,20 @@ export default function ShellPage({ subtitle }: Props) {
                 agentId: "",
                 bucketIndex: 0,
               })
-            : await importGithubSkillToDestination({
-                ...common,
-                destKind: payload.destKind,
-                agentId: payload.agentId,
-                bucketIndex: payload.bucketIndex,
-                projectRoot:
-                  payload.destKind === "project"
-                    ? payload.projectRoot
-                    : undefined,
-              });
+            : payload.destKind === "project"
+              ? await importGithubSkillToDestination({
+                  ...common,
+                  destKind: "project",
+                  agentId: payload.agentId,
+                  bucketIndex: payload.bucketIndex,
+                  projectRoot: payload.projectRoot,
+                })
+              : await importGithubSkillToDestination({
+                  ...common,
+                  destKind: "global",
+                  agentId: payload.agentId,
+                  bucketIndex: payload.bucketIndex,
+                });
         if ("error" in result) {
           failed.push(`${skill.title}：${result.error}`);
           continue;

@@ -64,7 +64,7 @@ export type CopySkillMenuSection = {
   items: { id: string; label: string; payload: CopySkillTargetPayload }[];
 };
 
-function mineLibrarySection(copyVerb: "复制" | "导入"): CopySkillMenuSection {
+function mineLibrarySection(_copyVerb: "复制" | "导入"): CopySkillMenuSection {
   return {
     key: "mine-library",
     title: "我的Skills",

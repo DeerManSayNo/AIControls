@@ -271,7 +271,9 @@ fn agent_command_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> {
     Ok(match agent_id {
         "cursor" => vec![home.join(".cursor/commands")],
         "claude" => vec![home.join(".claude/commands")],
-        "codex" => vec![home.join(".codex/commands")],
+        // Codex loads user custom prompts from `~/.codex/prompts` and
+        // exposes them as `/prompts:<name>`.
+        "codex" => vec![home.join(".codex/prompts")],
         "hermes" => vec![home.join(".hermes/commands")],
         "openclaw" => vec![home.join(".openclaw/commands")],
         "trae" => vec![home.join(".trae/commands")],
@@ -302,11 +304,19 @@ fn pick_agent_command_parent(agent_id: &str) -> Result<PathBuf, String> {
 }
 
 fn command_file_stem(command_name: &str) -> Result<String, String> {
-    let raw = command_name
-        .trim()
-        .trim_start_matches('/')
-        .strip_prefix("cp-")
-        .unwrap_or_else(|| command_name.trim().trim_start_matches('/'));
+    let mut raw = command_name.trim().trim_start_matches('/');
+    if raw
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("prompts:"))
+    {
+        raw = &raw[8..];
+    }
+    if raw
+        .get(..3)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("cp-"))
+    {
+        raw = &raw[3..];
+    }
     let mut out = String::new();
     let mut last_dash = false;
     for ch in raw.to_lowercase().chars() {

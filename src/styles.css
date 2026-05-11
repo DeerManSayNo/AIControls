@@ -19,7 +19,7 @@
     0 24px 64px rgba(0, 0, 0, 0.65);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  --bg: #f6f5f3;
+  --bg: #f9f9f5;
   --bg-elevated: #ffffff;
   --surface: #ffffff;
   --surface-hover: #f3f2ef;
@@ -3012,12 +3012,20 @@ main {
   overflow: hidden;
 }
 
+.skill-card__footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-top: auto;
+}
+
 .skill-card__tags {
   display: flex;
+  flex: 1;
   flex-wrap: wrap;
   gap: 0.32rem;
-  margin-top: auto;
-  align-self: flex-start;
+  min-width: 0;
 }
 
 .skill-card__tag {
@@ -3029,6 +3037,56 @@ main {
   border: 1px solid var(--border);
   color: var(--text-secondary);
   font-weight: 500;
+}
+
+.skill-card__actions {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.skill-card__mine-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent-muted) 10%);
+  color: var(--accent-dim);
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    color 0.16s var(--ease-out),
+    transform 0.16s var(--ease-out);
+}
+
+.skill-card__mine-button:hover,
+.skill-card__mine-button:focus-visible {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--accent-dim);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.skill-card__mine-button:disabled {
+  cursor: default;
+  transform: none;
+}
+
+.skill-card__mine-button--added {
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+  background: color-mix(in srgb, var(--accent-muted) 42%, transparent);
+  color: var(--accent-dim);
 }
 
 .card-context-menu {
@@ -7144,4 +7202,251 @@ html:has(.float-ball) #root {
 .float-ball--hovering .float-ball__sheen {
   opacity: 0.72;
   transform: translate(2px, -1px) rotate(-28deg);
+}
+
+/* ── Agent Config Modal ─────────────────────────────────────────── */
+
+.agent-config-modal .prompt-create-modal__body {
+  min-width: 0;
+}
+
+.agent-config-modal__section {
+  margin-bottom: 0;
+}
+
+.agent-config-modal__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-config-modal__section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.agent-config-modal__default-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+}
+
+.agent-config-modal__reset-btn {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  padding: 2px 8px;
+  border: 1px solid var(--accent-muted);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.agent-config-modal__reset-btn:hover {
+  background: var(--accent-muted);
+}
+
+.agent-config-modal__reset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-config-modal__path-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-config-modal__path-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.agent-config-modal__path-item--empty {
+  font-family: var(--font-sans);
+  font-style: italic;
+  color: var(--muted);
+  background: transparent;
+  padding: 6px 10px;
+}
+
+.agent-config-modal__path-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-config-modal__path-text--editable {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  margin: -1px -4px;
+  transition: background 0.12s;
+}
+
+.agent-config-modal__path-text--editable:hover {
+  background: rgba(13, 148, 136, 0.08);
+}
+
+.agent-config-modal__path-item.is-editing {
+  padding: 4px 6px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.agent-config-modal__edit-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.agent-config-modal__edit-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.agent-config-modal__browse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.agent-config-modal__browse-btn:hover {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+.agent-config-modal__browse-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-config-modal__edit-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.agent-config-modal__edit-confirm:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.agent-config-modal__edit-confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-config-modal__path-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.agent-config-modal__path-remove:hover {
+  background: rgba(200, 30, 30, 0.08);
+  color: var(--danger);
+}
+
+.agent-config-modal__path-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-config-modal__add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.agent-config-modal__add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.agent-config-modal__add-btn:hover {
+  background: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.agent-config-modal__add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

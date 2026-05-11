@@ -226,7 +226,6 @@ function CardContextMenu({
   locale: "zh" | "en";
 }) {
   useProjectOpenAppsMap();
-  const customApp = getOpenAppForProject(anchor.path);
   const menuRef = useRef<HTMLUListElement>(null);
 
   useEffect(() => {

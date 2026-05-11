@@ -33,6 +33,8 @@ pub struct MySkillItem {
     pub description: String,
     pub path: String,
     #[serde(default)]
+    pub source_path: Option<String>,
+    #[serde(default)]
     pub source_kind: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -96,6 +98,12 @@ fn validate_and_normalize(mut lib: MySkillsLibraryFile) -> Result<MySkillsLibrar
         item.title = item.title.trim().to_string();
         item.description = item.description.trim().to_string();
         item.path = item.path.trim().to_string();
+        item.source_path = item
+            .source_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
         item.source_kind = item
             .source_kind
             .as_deref()
@@ -174,6 +182,13 @@ pub fn add_skill_to_my_library(
         return Err("路径为空".into());
     }
 
+    let mut lib = load_my_skills_library(app)?;
+    if let Some(existing) = lib.items.iter().find(|item| {
+        item.path == trimmed || item.source_path.as_deref() == Some(trimmed.as_str())
+    }) {
+        return Ok(existing.clone());
+    }
+
     let pkgs = my_skills_packages_dir(app)?;
     fs::create_dir_all(&pkgs).map_err(|e| format!("创建「我的技能」目录失败：{e}"))?;
 
@@ -186,12 +201,12 @@ pub fn add_skill_to_my_library(
         title,
         description,
         path: final_dir.to_string_lossy().into_owned(),
+        source_path: Some(trimmed),
         source_kind: None,
         created_at: ts,
         updated_at: ts,
     };
 
-    let mut lib = load_my_skills_library(app)?;
     lib.items.push(entry.clone());
     let normalized = validate_and_normalize(lib)?;
     write_library_atomic(app, &normalized)?;
@@ -325,6 +340,7 @@ pub fn convert_prompt_to_my_skill(
         title,
         description,
         path: final_dir.to_string_lossy().into_owned(),
+        source_path: None,
         source_kind: Some("prompt".into()),
         created_at: ts,
         updated_at: ts,

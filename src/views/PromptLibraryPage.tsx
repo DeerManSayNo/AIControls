@@ -10,6 +10,11 @@ import {
   type PromptType,
 } from "../api/prompts";
 import { getMySkillsLibrary } from "../api/mySkills";
+import {
+  AGENT_COMMAND_SEGMENT_SLUG_RE,
+  agentCommandSegmentInvalidMessage,
+  isValidAgentCommandSegmentInput,
+} from "../agentCommandInput";
 import { useI18n } from "../i18n/provider";
 
 const TYPE_META: Record<PromptType, { label: string; rootName: string }> = {
@@ -31,7 +36,6 @@ const PROMPT_TYPES = Object.keys(TYPE_META) as PromptType[];
 type Toast = { message: string; kind: "success" | "error" };
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
-const COMMAND_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function emptyLibrary(): PromptLibraryFile {
   return { version: 1, folders: [], items: [] };
@@ -598,9 +602,14 @@ export default function PromptLibraryPage() {
   }
 
   async function publishPromptCommand(item: PromptItem, rawName: string) {
-    const commandName = slugifyCommandName(rawName);
-    if (!COMMAND_NAME_RE.test(commandName)) {
-      setToast({ kind: "error", message: locale === "zh" ? "命令名只能包含小写字母、数字和短横线" : "Use lowercase letters, numbers, and hyphens only" });
+    const trimmed = rawName.trim();
+    if (!isValidAgentCommandSegmentInput(trimmed)) {
+      setToast({ kind: "error", message: agentCommandSegmentInvalidMessage(locale) });
+      return;
+    }
+    const commandName = slugifyCommandName(trimmed);
+    if (!AGENT_COMMAND_SEGMENT_SLUG_RE.test(commandName)) {
+      setToast({ kind: "error", message: agentCommandSegmentInvalidMessage(locale) });
       return;
     }
     if (commandNameExists(commandName, item.id)) {
@@ -652,9 +661,14 @@ export default function PromptLibraryPage() {
   }
 
   async function convertPromptItemToSkill(item: PromptItem, rawSkillName: string) {
-    const skillName = slugifyCommandName(rawSkillName);
-    if (!COMMAND_NAME_RE.test(skillName)) {
-      setToast({ kind: "error", message: locale === "zh" ? "Skill 名只能包含小写字母、数字和短横线" : "Use lowercase letters, numbers, and hyphens only" });
+    const trimmed = rawSkillName.trim();
+    if (!isValidAgentCommandSegmentInput(trimmed)) {
+      setToast({ kind: "error", message: agentCommandSegmentInvalidMessage(locale) });
+      return;
+    }
+    const skillName = slugifyCommandName(trimmed);
+    if (!AGENT_COMMAND_SEGMENT_SLUG_RE.test(skillName)) {
+      setToast({ kind: "error", message: agentCommandSegmentInvalidMessage(locale) });
       return;
     }
     try {
@@ -1628,7 +1642,14 @@ export default function PromptLibraryPage() {
                       >
                         {locale === "zh" ? "取消" : "Cancel"}
                       </button>
-                      <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
+                      <button
+                        type="submit"
+                        className="prompt-create-modal__submit"
+                        disabled={
+                          saving ||
+                          !isValidAgentCommandSegmentInput(commandEditor.commandName)
+                        }
+                      >
                         {locale === "zh" ? "发布" : "Publish"}
                       </button>
                     </div>
@@ -1730,7 +1751,14 @@ export default function PromptLibraryPage() {
                       >
                         {locale === "zh" ? "取消" : "Cancel"}
                       </button>
-                      <button type="submit" className="prompt-create-modal__submit" disabled={saving}>
+                      <button
+                        type="submit"
+                        className="prompt-create-modal__submit"
+                        disabled={
+                          saving ||
+                          !isValidAgentCommandSegmentInput(skillConvertEditor.skillName)
+                        }
+                      >
                         {locale === "zh" ? "生成 Skill" : "Create Skill"}
                       </button>
                     </div>

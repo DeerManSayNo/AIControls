@@ -47,6 +47,11 @@ import {
   type PromptItem,
   type PromptLibraryFile,
 } from "../api/prompts";
+import {
+  agentCommandSegmentInvalidMessage,
+  isValidAgentCommandSegmentInput,
+  normalizePromptApplyCommandSegment,
+} from "../agentCommandInput";
 import { useProjectPaths } from "../projectPathsStorage";
 import { PageRefreshButton } from "../components/PageRefreshButton";
 import { SkillCopyDestinationDialog } from "../components/SkillCopyDestinationDialog";
@@ -159,6 +164,41 @@ function folderBasename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "Project";
 }
 
+function normalizeSkillPathForCompare(path?: string | null): string {
+  return (path ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function normalizedPathBasename(path?: string | null): string {
+  const normalized = normalizeSkillPathForCompare(path);
+  if (!normalized) return "";
+  return normalized.split("/").pop() ?? "";
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function rowAppliedSkillFolderPrefixes(row: BrowseRow): string[] {
+  const base = normalizedPathBasename(row.sourcePath) || slugifyCommandSegment(row.title);
+  const prefixes =
+    row.mineSkillSourceKind === "prompt"
+      ? ["cps-"]
+      : row.mineSkillSourceKind === null
+        ? ["cs-", "cps-"]
+        : ["cs-"];
+  return prefixes.map((prefix) => `${prefix}${base}`.toLowerCase());
+}
+
+function rowMatchesAppliedSkill(row: BrowseRow, asset: AssetEntry): boolean {
+  if (asset.kind !== "skill") return false;
+  const folder = normalizedPathBasename(asset.path).toLowerCase();
+  const title = asset.title.trim().toLowerCase();
+  return rowAppliedSkillFolderPrefixes(row).some((prefix) => {
+    const re = new RegExp(`^${escapeRegExp(prefix)}(?:-\\d+)?$`);
+    return re.test(folder) || re.test(title);
+  });
+}
+
 /** 列表里技能包为目录路径；散装 `SKILL.md` 以文件名结尾，只支持复制、不提供「删除文件夹」 */
 function skillBrowsePathIsDeletableFolder(sourcePath: string): boolean {
   const t = sourcePath.trim().replace(/\\/g, "/");
@@ -169,7 +209,8 @@ function slugifyCommandSegment(input: string): string {
   const out = input
     .trim()
     .toLowerCase()
-    .replace(/^\/?(cps|cs)-/, "")
+    .replace(/^\/?prompts:/, "")
+    .replace(/^\/?(cps|cs|cp)-/, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .replace(/-{2,}/g, "-");
@@ -206,6 +247,22 @@ function csCommandForInstalledSkill(row: BrowseRow): string {
   return title.startsWith("cps-") || folder.startsWith("cps-")
     ? `/cps-${slugifyCommandSegment(base)}`
     : `/cs-${slugifyCommandSegment(base)}`;
+}
+
+function codexPromptCommand(commandName: string): string {
+  return `/prompts:cp-${slugifyCommandSegment(commandName)}`;
+}
+
+function promptCommandForInstalledPrompt(row: BrowseRow): string {
+  const title = row.title.trim().toLowerCase();
+  const folder = folderBasename(row.sourcePath ?? "").toLowerCase();
+  const base = title.startsWith("cp-") || folder.startsWith("cp-")
+    ? row.title
+    : folderBasename(row.sourcePath ?? row.title);
+  if (row.ecosystem === "codex") {
+    return codexPromptCommand(base);
+  }
+  return `/cp-${slugifyCommandSegment(base)}`;
 }
 
 function cpCommandForPrompt(item: PromptItem): string | null {
@@ -290,6 +347,14 @@ type AggregateSnapshotCache = {
 const AGGREGATE_SNAPSHOT_CACHE_KEY = "aicontrols.aggregateSnapshot.v2";
 const AGGREGATE_SNAPSHOT_CACHE_TTL_MS = 10 * 60 * 1000;
 const AGGREGATE_RENDER_PAGE_SIZE = 12;
+const MY_SKILL_APPLIED_LOCATIONS_KEY = "aicontrols.mySkillAppliedLocations.v1";
+
+type MySkillAppliedLocation = {
+  label: string;
+  path: string;
+};
+
+type MySkillAppliedLocationsFile = Record<string, MySkillAppliedLocation[]>;
 
 function aggregateProjectSignature(paths: readonly string[]): string {
   return [...paths].map((p) => p.trim()).filter(Boolean).sort().join("\n");
@@ -341,6 +406,50 @@ function clearAggregateSnapshotCache(): void {
   } catch {
     // Ignore storage failures.
   }
+}
+
+function readMySkillAppliedLocations(): MySkillAppliedLocationsFile {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(MY_SKILL_APPLIED_LOCATIONS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as MySkillAppliedLocationsFile;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeMySkillAppliedLocations(data: MySkillAppliedLocationsFile): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(MY_SKILL_APPLIED_LOCATIONS_KEY, JSON.stringify(data));
+  } catch {
+    // This is only a UI warning aid; ignore storage failures.
+  }
+}
+
+function rememberMySkillAppliedLocation(
+  skillId: string,
+  location: MySkillAppliedLocation,
+): void {
+  const id = skillId.trim();
+  const path = normalizeSkillPathForCompare(location.path);
+  if (!id || !path) return;
+  const data = readMySkillAppliedLocations();
+  const existing = data[id] ?? [];
+  if (existing.some((item) => normalizeSkillPathForCompare(item.path) === path)) return;
+  data[id] = [...existing, { ...location, path }];
+  writeMySkillAppliedLocations(data);
+}
+
+function forgetMySkillAppliedLocations(skillId: string): void {
+  const id = skillId.trim();
+  if (!id) return;
+  const data = readMySkillAppliedLocations();
+  if (!(id in data)) return;
+  delete data[id];
+  writeMySkillAppliedLocations(data);
 }
 
 function dedupeMergeInventories(parts: AgentInventory[]): AgentInventory {
@@ -665,6 +774,9 @@ export default function SkillBrowseShell({
   );
   const [mySkillsLoading, setMySkillsLoading] = useState(false);
   const [mySkillsImportBusy, setMySkillsImportBusy] = useState(false);
+  const [mySkillAddPendingPaths, setMySkillAddPendingPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [aggregateMineKind, setAggregateMineKind] =
     useState<MineKindFilter>("all");
 
@@ -1405,19 +1517,25 @@ export default function SkillBrowseShell({
         ecosystem,
         AGENT_LABEL_BY_ID[ecosystem] ?? title,
         locale,
-      ).map((r) => ({
-        ...r,
-        id: `g:${ecosystem}:mine:${r.id}`,
-        tags: [
-          AGENT_LABEL_BY_ID[ecosystem] ?? title,
-          r.kind === "prompt"
-            ? locale === "zh" ? "我的 /cp" : "My /cp"
-            : locale === "zh" ? "我的 /cs" : "My /cs",
-          csCommandForInstalledSkill(r),
-        ],
-        csCommand: r.kind === "prompt" ? undefined : csCommandForInstalledSkill(r),
-        cpCommand: r.kind === "prompt" ? csCommandForInstalledSkill(r) : undefined,
-      }));
+      ).map((r) => {
+        const installedCommand =
+          r.kind === "prompt" ? promptCommandForInstalledPrompt(r) : csCommandForInstalledSkill(r);
+        return {
+          ...r,
+          id: `g:${ecosystem}:mine:${r.id}`,
+          tags: [
+            AGENT_LABEL_BY_ID[ecosystem] ?? title,
+            r.kind === "prompt"
+              ? ecosystem === "codex"
+                ? locale === "zh" ? "我的 /prompts" : "My /prompts"
+                : locale === "zh" ? "我的 /cp" : "My /cp"
+              : locale === "zh" ? "我的 /cs" : "My /cs",
+            installedCommand,
+          ],
+          csCommand: r.kind === "prompt" ? undefined : installedCommand,
+          cpCommand: r.kind === "prompt" ? installedCommand : undefined,
+        };
+      });
       const scenarioCounts = scenarioCountsFromRows(mineRows);
       const customCatCounts = computeCustomCategoryCounts(mineRows);
       const filtered = applyScenarioFilter(applyKindAndQuery(mineRows));
@@ -1781,6 +1899,17 @@ export default function SkillBrowseShell({
     promptLibrary?.items.filter((item) => cpCommandForPrompt(item) !== null).length ?? 0;
   const aggregateMineCount = (mySkillsLib?.items.length ?? 0) + publishedPromptCount;
 
+  const mySkillPathSet = useMemo(() => {
+    const paths = new Set<string>();
+    for (const item of mySkillsLib?.items ?? []) {
+      const libraryPath = normalizeSkillPathForCompare(item.path);
+      const sourcePath = normalizeSkillPathForCompare(item.sourcePath);
+      if (libraryPath) paths.add(libraryPath);
+      if (sourcePath) paths.add(sourcePath);
+    }
+    return paths;
+  }, [mySkillsLib]);
+
   const assetsTotalBadge = useMemo(() => {
     if (dataSet !== "aggregate") return listedTotal;
     const allCount = aggregateSnapshot
@@ -1810,6 +1939,134 @@ export default function SkillBrowseShell({
       path: item.sourcePath,
       skillExtraFiles: item.skillExtraFiles,
     });
+  };
+
+  const addCardSkillToMine = (item: BrowseRow) => {
+    const src = item.sourcePath?.trim();
+    const pathKey = normalizeSkillPathForCompare(src);
+    if (!src || !pathKey || mySkillAddPendingPaths.has(pathKey) || mySkillPathSet.has(pathKey)) {
+      return;
+    }
+
+    setMySkillAddPendingPaths((prev) => new Set(prev).add(pathKey));
+    void (async () => {
+      try {
+        const added = await addSkillToMyLibrary(src);
+        clearAggregateSnapshotCache();
+        setMySkillsLib((prev) => {
+          const base: MySkillsLibraryFile = prev ?? { version: 1, items: [] };
+          const addedPath = normalizeSkillPathForCompare(added.path);
+          const addedSourcePath = normalizeSkillPathForCompare(added.sourcePath);
+          const exists = base.items.some((existing) => {
+            return (
+              existing.id === added.id ||
+              (!!addedPath && normalizeSkillPathForCompare(existing.path) === addedPath) ||
+              (!!addedSourcePath &&
+                normalizeSkillPathForCompare(existing.sourcePath) === addedSourcePath)
+            );
+          });
+          if (exists) {
+            return {
+              ...base,
+              items: base.items.map((existing) =>
+                existing.id === added.id ? added : existing,
+              ),
+            };
+          }
+          return { ...base, items: [...base.items, added] };
+        });
+        setShellToast({
+          at: Date.now(),
+          message: locale === "zh" ? "已添加到「我的」" : "Added to My skills",
+        });
+      } catch (err) {
+        window.alert(
+          `${locale === "zh" ? "添加到我的失败" : "Add to My skills failed"}: ${String(err)}`,
+        );
+      } finally {
+        setMySkillAddPendingPaths((prev) => {
+          const next = new Set(prev);
+          next.delete(pathKey);
+          return next;
+        });
+      }
+    })();
+  };
+
+  const findMySkillAppliedLocations = (row: BrowseRow): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const pushLocation = (label: string, path: string) => {
+      const key = normalizeSkillPathForCompare(path) || label;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(label);
+    };
+    const push = (label: string, asset: AssetEntry) => {
+      if (!rowMatchesAppliedSkill(row, asset)) return;
+      pushLocation(label, asset.path);
+    };
+
+    for (const location of readMySkillAppliedLocations()[row.sourceId] ?? []) {
+      pushLocation(location.label, location.path);
+    }
+
+    for (const agent of aggregateSnapshot?.agents ?? []) {
+      for (const asset of agent.inv?.skills ?? []) {
+        push(
+          locale === "zh"
+            ? `${agent.title} · 用户全局 · ${normalizedPathBasename(asset.path)}`
+            : `${agent.title} · Global · ${normalizedPathBasename(asset.path)}`,
+          asset,
+        );
+      }
+    }
+
+    for (const project of aggregateSnapshot?.projects ?? []) {
+      const projectName = folderBasename(project.path);
+      for (const asset of project.inv?.skills ?? []) {
+        const agentId = inferAgentIdFromAssetPath(asset.path) ?? "__other__";
+        push(
+          `${projectName} · ${agentLabelForId(agentId, locale)} · ${normalizedPathBasename(asset.path)}`,
+          asset,
+        );
+      }
+    }
+
+    if (ecosystem && liveInv) {
+      for (const asset of liveInv.skills) {
+        push(
+          locale === "zh"
+            ? `${agentLabelForId(ecosystem, locale)} · 用户全局 · ${normalizedPathBasename(asset.path)}`
+            : `${agentLabelForId(ecosystem, locale)} · Global · ${normalizedPathBasename(asset.path)}`,
+          asset,
+        );
+      }
+    }
+
+    if (ecosystem) {
+      for (const scan of agentProjectScans) {
+        const inv = scan.inv ? filterInventoryForAgent(ecosystem, scan.inv) : null;
+        for (const asset of inv?.skills ?? []) {
+          push(
+            `${folderBasename(scan.path)} · ${agentLabelForId(ecosystem, locale)} · ${normalizedPathBasename(asset.path)}`,
+            asset,
+          );
+        }
+      }
+    }
+
+    if (projectRoot && projectInv) {
+      for (const asset of projectInv.skills) {
+        const agentId = inferAgentIdFromAssetPath(asset.path) ?? "__other__";
+        push(
+          `${folderBasename(projectRoot)} · ${agentLabelForId(agentId, locale)} · ${normalizedPathBasename(asset.path)}`,
+          asset,
+        );
+      }
+    }
+
+    return out;
   };
 
   const onCardContextMenu = (e: MouseEvent, item: BrowseRow) => {
@@ -1849,6 +2106,14 @@ export default function SkillBrowseShell({
   }
 
   function renderBrowseCard(item: BrowseRow) {
+    const skillPathKey = normalizeSkillPathForCompare(item.sourcePath);
+    const canAddToMine =
+      item.kind === "skill" &&
+      !!skillPathKey &&
+      !item.id.startsWith("mine:") &&
+      !(dataSet === "aggregate" && aggregateAssetsTab === "mine");
+    const addToMinePending = canAddToMine && mySkillAddPendingPaths.has(skillPathKey);
+    const addedToMine = canAddToMine && mySkillPathSet.has(skillPathKey);
     return (
       <article
         key={item.id}
@@ -1890,13 +2155,58 @@ export default function SkillBrowseShell({
           </span>
         </div>
         <p className="skill-card__desc">{item.desc}</p>
-        {dataSet === "aggregate" && item.tags.length > 0 ? (
-          <div className="skill-card__tags" aria-label={locale === "zh" ? "来源标签" : "Source tags"}>
-            {item.tags.map((t, i) => (
-              <span key={`${item.id}-tag-${i}`} className="skill-card__tag">
-                {t}
-              </span>
-            ))}
+        {(dataSet === "aggregate" && item.tags.length > 0) || canAddToMine ? (
+          <div className="skill-card__footer">
+            {dataSet === "aggregate" && item.tags.length > 0 ? (
+              <div className="skill-card__tags" aria-label={locale === "zh" ? "来源标签" : "Source tags"}>
+                {item.tags.map((t, i) => (
+                  <span key={`${item.id}-tag-${i}`} className="skill-card__tag">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {canAddToMine ? (
+              <div className="skill-card__actions">
+                <button
+                  type="button"
+                  className={`skill-card__mine-button${
+                    addedToMine ? " skill-card__mine-button--added" : ""
+                  }`}
+                  disabled={addToMinePending || addedToMine}
+                  aria-pressed={addedToMine}
+                  aria-label={
+                    addedToMine
+                      ? locale === "zh"
+                        ? "已添加到我的"
+                        : "Added to My skills"
+                      : addToMinePending
+                        ? locale === "zh"
+                          ? "正在添加到我的"
+                          : "Adding to My skills"
+                        : locale === "zh"
+                          ? "添加到我的"
+                          : "Add to My skills"
+                  }
+                  title={
+                    addedToMine
+                      ? locale === "zh"
+                        ? "已添加到我的"
+                        : "Added to My skills"
+                      : locale === "zh"
+                        ? "添加到我的"
+                        : "Add to My skills"
+                  }
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    addCardSkillToMine(item);
+                  }}
+                >
+                  <span aria-hidden>{addedToMine ? "✓" : addToMinePending ? "…" : "+"}</span>
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </article>
@@ -2556,15 +2866,30 @@ export default function SkillBrowseShell({
                         const rawId = row.sourceId?.trim();
                         setCardContextMenu(null);
                         if (!rawId) return;
+                        const appliedLocations = findMySkillAppliedLocations(row);
+                        const locationPreview = appliedLocations
+                          .slice(0, 6)
+                          .map((location) => `• ${location}`)
+                          .join("\n");
+                        const overflowCount = appliedLocations.length - 6;
                         const ok = window.confirm(
-                          locale === "zh"
-                            ? `从「我的」移除「${row.title}」？将删除本地副本。`
-                            : `Remove "${row.title}" from My skills? The local copy will be deleted.`,
+                          appliedLocations.length > 0
+                            ? locale === "zh"
+                              ? `「${row.title}」已应用到以下位置：\n\n${locationPreview}${
+                                  overflowCount > 0 ? `\n等 ${appliedLocations.length} 处` : ""
+                                }\n\n从「我的」移除只会删除「我的」里的本地副本，不会删除这些已应用副本。继续移除？`
+                              : `"${row.title}" has been applied to:\n\n${locationPreview}${
+                                  overflowCount > 0 ? `\nand ${overflowCount} more` : ""
+                                }\n\nRemoving it from My skills only deletes the local My copy. Applied copies will remain. Continue?`
+                            : locale === "zh"
+                              ? `从「我的」移除「${row.title}」？将删除本地副本。`
+                              : `Remove "${row.title}" from My skills? The local copy will be deleted.`,
                         );
                         if (!ok) return;
                         void (async () => {
                           try {
                             await removeMySkill(rawId);
+                            forgetMySkillAppliedLocations(rawId);
                             setRefreshKey((k) => k + 1);
                             setSelectedEntry((cur) =>
                               cur?.path?.trim() === row.sourcePath?.trim()
@@ -2660,6 +2985,16 @@ export default function SkillBrowseShell({
               onClose={() => setSkillCopyTargetModalRow(null)}
               onChoose={(payload) => {
                 const row = skillCopyTargetModalRow;
+                if (!row) return;
+                if (row.kind === "prompt") {
+                  const segment = normalizePromptApplyCommandSegment(
+                    row.promptCommandName ?? row.cpCommand ?? row.title ?? "",
+                  );
+                  if (!isValidAgentCommandSegmentInput(segment)) {
+                    window.alert(agentCommandSegmentInvalidMessage(locale));
+                    return;
+                  }
+                }
                 const src = row.sourcePath?.trim();
                 void (async () => {
                   setSkillCopyTargetModalRow(null);
@@ -2725,6 +3060,20 @@ export default function SkillBrowseShell({
                     return;
                   }
                   const applied = row.id.startsWith("mine:");
+                  if (applied) {
+                    const appliedPath = normalizeSkillPathForCompare(r.path);
+                    const appliedLabel =
+                      payload.destKind === "project"
+                        ? `${folderBasename(payload.projectRoot)} · ${agentLabelForId(payload.agentId, locale)} · ${normalizedPathBasename(appliedPath)}`
+                        : locale === "zh"
+                          ? `${agentLabelForId(payload.agentId, locale)} · 用户全局 · ${normalizedPathBasename(appliedPath)}`
+                          : `${agentLabelForId(payload.agentId, locale)} · Global · ${normalizedPathBasename(appliedPath)}`;
+                    rememberMySkillAppliedLocation(row.sourceId, {
+                      label: appliedLabel,
+                      path: appliedPath,
+                    });
+                    clearAggregateSnapshotCache();
+                  }
                   setShellToast({
                     at: Date.now(),
                     message: applied

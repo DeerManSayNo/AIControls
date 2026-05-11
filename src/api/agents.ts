@@ -246,3 +246,30 @@ export async function deleteSkillAtPath(
     return { error: formatInvokeError(e) };
   }
 }
+
+export type AgentSkillPaths = {
+  defaultPaths: string[];
+  customPaths: string[];
+};
+
+export async function getAgentSkillPaths(
+  agentId: string,
+): Promise<AgentSkillPaths | { error: string }> {
+  try {
+    return await invoke<AgentSkillPaths>("get_agent_skill_paths", { agentId });
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+export async function setAgentCustomSkillPaths(
+  agentId: string,
+  paths: string[],
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    await invoke<void>("set_agent_custom_skill_paths", { agentId, paths });
+    return { ok: true };
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}

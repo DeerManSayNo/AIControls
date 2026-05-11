@@ -5,6 +5,7 @@ export type MySkillItem = {
   title: string;
   description: string;
   path: string;
+  sourcePath?: string | null;
   sourceKind?: "prompt" | null;
   createdAt: number;
   updatedAt: number;

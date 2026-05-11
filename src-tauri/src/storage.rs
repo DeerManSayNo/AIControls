@@ -674,3 +674,44 @@ pub fn clear_hidden_sidebar_agents(app: &AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ─── Custom skill paths per agent ──────────────────────────────────────────
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct AgentCustomSkillPathsFile {
+    /// agent_id → list of absolute (or ~-prefixed) paths
+    #[serde(default)]
+    paths: HashMap<String, Vec<String>>,
+}
+
+fn agent_custom_skill_paths_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("agent_custom_skill_paths.json"))
+}
+
+pub fn load_agent_custom_skill_paths(
+    app: &AppHandle,
+) -> Result<HashMap<String, Vec<String>>, String> {
+    let path = agent_custom_skill_paths_file(app)?;
+    if !path.is_file() {
+        return Ok(HashMap::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let file: AgentCustomSkillPathsFile = serde_json::from_str(&text)
+        .map_err(|e| format!("读取 Agent 自定义 Skill 路径失败：{e}"))?;
+    Ok(file.paths)
+}
+
+pub fn save_agent_custom_skill_paths(
+    app: &AppHandle,
+    paths: &HashMap<String, Vec<String>>,
+) -> Result<(), String> {
+    let path = agent_custom_skill_paths_file(app)?;
+    ensure_parent(&path)?;
+    let file = AgentCustomSkillPathsFile {
+        paths: paths.clone(),
+    };
+    let json = serde_json::to_string_pretty(&file)
+        .map_err(|e| format!("序列化 Agent 自定义 Skill 路径失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入 Agent 自定义 Skill 路径失败：{e}"))?;
+    Ok(())
+}

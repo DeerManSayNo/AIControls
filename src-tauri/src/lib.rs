@@ -416,6 +416,30 @@ async fn get_agent_global_inventory(
         } else {
             scan::global_inventory(&agent_id)?
         };
+        // Scan additional custom skill paths if configured
+        if let Ok(custom_map) = storage::load_agent_custom_skill_paths(&app) {
+            if let Some(extra_paths) = custom_map.get(&agent_id) {
+                let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+                let extra_roots: Vec<std::path::PathBuf> = extra_paths
+                    .iter()
+                    .filter_map(|p| {
+                        let expanded = if p.starts_with("~/") {
+                            home.join(&p[2..])
+                        } else if p == "~" {
+                            home.clone()
+                        } else {
+                            std::path::PathBuf::from(p)
+                        };
+                        if expanded.is_dir() { Some(expanded) } else { None }
+                    })
+                    .collect();
+                if !extra_roots.is_empty() {
+                    let mut extra_skills = Vec::new();
+                    scan::push_skills_from_roots_public(&extra_roots, &mut extra_skills);
+                    inv.skills.extend(extra_skills);
+                }
+            }
+        }
         let scenario_map = storage::load_scenario_map(&app).unwrap_or_default();
         scan::attach_scenarios(&mut inv, &scenario_map);
         let brief_map_zh = storage::load_brief_map(&app, "zh").unwrap_or_default();
@@ -1127,6 +1151,41 @@ fn list_visible_project_skill_buckets(
     skill_copy::list_visible_project_skill_buckets(&project_root)
 }
 
+#[tauri::command]
+fn get_agent_skill_paths(
+    app: AppHandle,
+    agent_id: String,
+) -> Result<serde_json::Value, String> {
+    let default_paths = skill_copy::resolve_global_skill_buckets(Some(&app), &agent_id)?;
+    let default_strs: Vec<String> = default_paths
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    let custom = storage::load_agent_custom_skill_paths(&app)?;
+    let custom_paths = custom.get(&agent_id).cloned().unwrap_or_default();
+
+    Ok(serde_json::json!({
+        "defaultPaths": default_strs,
+        "customPaths": custom_paths,
+    }))
+}
+
+#[tauri::command]
+fn set_agent_custom_skill_paths(
+    app: AppHandle,
+    agent_id: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let mut all = storage::load_agent_custom_skill_paths(&app)?;
+    if paths.is_empty() {
+        all.remove(&agent_id);
+    } else {
+        all.insert(agent_id, paths);
+    }
+    storage::save_agent_custom_skill_paths(&app, &all)
+}
+
 /// 参数与前端 `invoke` 顶层 camelCase 字段一一对应（勿再用单字段 struct，否则需包一层 `{ args: {...} }`）。
 #[tauri::command]
 fn copy_skill_package(
@@ -1392,6 +1451,8 @@ pub fn run() {
             detect_github_repo_skills,
             import_github_skill_to_destination,
             list_visible_project_skill_buckets,
+            get_agent_skill_paths,
+            set_agent_custom_skill_paths,
             get_prompt_library,
             save_prompt_library,
             convert_prompt_to_my_skill,

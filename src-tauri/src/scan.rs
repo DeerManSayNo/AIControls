@@ -777,6 +777,10 @@ fn push_skills_from_roots(roots: &[PathBuf], list: &mut Vec<AssetEntry>) {
     push_skills_from_paths(paths, list);
 }
 
+pub fn push_skills_from_roots_public(roots: &[PathBuf], list: &mut Vec<AssetEntry>) {
+    push_skills_from_roots(roots, list);
+}
+
 fn push_skills_from_project_root(root: &Path, list: &mut Vec<AssetEntry>) {
     let mut paths = Vec::new();
     collect_project_skill_paths(root, &mut paths);
@@ -1203,7 +1207,7 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
         }
         "codex" => {
             push_skills_from_roots(&[home.join(".codex/skills")], &mut skills);
-            push_prompt_commands_from_roots(&[home.join(".codex/commands")], &mut skills);
+            push_prompt_commands_from_roots(&[home.join(".codex/prompts")], &mut skills);
             let config = home.join(".codex/config.toml");
             if config.is_file() {
                 parse_mcp_toml_file(&config, &mut mcp);
