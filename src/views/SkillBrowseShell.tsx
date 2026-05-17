@@ -131,6 +131,7 @@ const AGENT_LABEL_BY_ID: Record<string, string> = {
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",
+  opencode: "opencode",
 };
 
 const FALLBACK_AGENT_IDS = [
@@ -142,6 +143,7 @@ const FALLBACK_AGENT_IDS = [
   "trae",
   "qoder",
   "kiro",
+  "opencode",
 ] as const;
 
 function agentLabelForId(id: string, locale: "zh" | "en"): string {

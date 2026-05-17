@@ -37,7 +37,8 @@ export type AgentId =
   | "openclaw"
   | "trae"
   | "qoder"
-  | "kiro";
+  | "kiro"
+  | "opencode";
 
 export async function listDetectedAgents(): Promise<AgentScanResult[] | null> {
   try {

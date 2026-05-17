@@ -282,6 +282,7 @@ fn agent_command_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> {
             home.join(".qoderwork/commands"),
         ],
         "kiro" => vec![home.join(".kiro/commands")],
+        "opencode" => vec![home.join(".config/opencode/commands")],
         _ => return Err(format!("未知 agent: {agent_id}")),
     })
 }

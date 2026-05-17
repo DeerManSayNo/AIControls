@@ -162,6 +162,15 @@ export function NavIconKiro({ className, ...props }: IconProps) {
   );
 }
 
+export function NavIconOpencode({ className, ...props }: IconProps) {
+  return (
+    <svg {...base} {...props} className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12 11 15 16 9" />
+    </svg>
+  );
+}
+
 export function NavIconChat(props: IconProps) {
   return (
     <svg {...base} {...props}>
@@ -233,6 +242,7 @@ const AGENT_ICONS: Record<string, ComponentType<IconProps>> = {
   trae: NavIconTrae,
   qoder: NavIconQoder,
   kiro: NavIconKiro,
+  opencode: NavIconOpencode,
 };
 
 export function NavIconForAgent(agentId: string, props?: IconProps) {

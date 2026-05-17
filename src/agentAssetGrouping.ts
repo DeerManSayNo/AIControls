@@ -33,6 +33,9 @@ export function inferAgentIdFromAssetPath(path: string): string | null {
 
   if (n.includes("/.kiro/")) return "kiro";
 
+  if (n.includes("/.opencode/")) return "opencode";
+  if (n.includes("/.config/opencode/")) return "opencode";
+
   if (n.includes("/.cursor/")) return "cursor";
   if (/(?:^|[\\/])\.cursorrules$/i.test(path)) return "cursor";
   if (n.includes("/.vscode/")) return "cursor";

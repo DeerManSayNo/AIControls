@@ -27,6 +27,7 @@ pub fn global_skill_parent_dirs(agent_id: &str) -> Result<Vec<PathBuf>, String> 
         "trae" => vec![home.join(".trae/skills")],
         "qoder" => vec![home.join(".qoder/skills"), home.join(".qoderwork/skills")],
         "kiro" => vec![home.join(".kiro/skills")],
+        "opencode" => vec![home.join(".config/opencode/skills")],
         _ => return Err(format!("未知 agent: {agent_id}")),
     })
 }
@@ -78,6 +79,7 @@ pub fn list_visible_project_skill_buckets(
     let mut out = Vec::new();
     for agent_id in [
         "cursor", "claude", "codex", "hermes", "openclaw", "trae", "qoder", "kiro",
+        "opencode",
     ] {
         let buckets = project_skill_parent_dirs(&root, agent_id)?;
         for (idx, bucket_path) in buckets.iter().enumerate() {
@@ -112,6 +114,7 @@ pub fn project_skill_parent_dirs(
         "trae" => &[".trae/skills"],
         "qoder" => &[".qoder/skills", ".qoderwork/skills"],
         "kiro" => &[".kiro/skills"],
+        "opencode" => &[".opencode/skills"],
         _ => return Err(format!("未知 agent: {agent_id}")),
     };
     Ok(rels.iter().map(|r| root.join(r)).collect())

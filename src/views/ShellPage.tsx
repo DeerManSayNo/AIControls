@@ -45,6 +45,7 @@ const AGENT_LABEL_BY_ID: Record<string, string> = {
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",
+  opencode: "opencode",
 };
 
 function fallbackAgentLabel(agentId: string): string {

@@ -12,6 +12,7 @@ const AGENT_ORDER = [
   "trae",
   "qoder",
   "kiro",
+  "opencode",
 ] as const;
 
 const AGENT_UI_NAME: Record<string, string> = {
@@ -23,6 +24,7 @@ const AGENT_UI_NAME: Record<string, string> = {
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",
+  opencode: "opencode",
 };
 
 /** Relative skill roots; index = `bucketIndex` passed to the desktop command. */
@@ -35,6 +37,7 @@ const SKILL_BUCKET_REL: Record<string, readonly string[]> = {
   trae: [".trae/skills"],
   qoder: [".qoder/skills", ".qoderwork/skills"],
   kiro: [".kiro/skills"],
+  opencode: [".opencode/skills"],
 };
 
 /** 「复制到…」目标：Agent 目录或应用内「我的」技能库。 */

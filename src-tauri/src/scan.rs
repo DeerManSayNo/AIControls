@@ -150,6 +150,9 @@ pub fn detect_agents() -> Vec<AgentScanResult> {
     if let Some(root) = detect_kiro_path(&home) {
         push_detected_agent(&mut out, "kiro", "Kiro", root);
     }
+    if let Some(root) = detect_opencode_path(&home) {
+        push_detected_agent(&mut out, "opencode", "opencode", root);
+    }
 
     out
 }
@@ -187,6 +190,11 @@ fn detect_qoder_path(home: &Path) -> Option<PathBuf> {
 
 fn detect_kiro_path(home: &Path) -> Option<PathBuf> {
     first_existing_path(vec![home.join(".kiro")]).or_else(|| app_bundle_path("Kiro"))
+}
+
+fn detect_opencode_path(home: &Path) -> Option<PathBuf> {
+    let xdg = home.join(".config").join("opencode");
+    if xdg.is_dir() { Some(xdg) } else { None }
 }
 
 fn should_skip_scan_dir(name: &str) -> bool {
@@ -241,6 +249,7 @@ fn collect_project_skill_paths(root: &Path, out: &mut Vec<PathBuf>) {
         ".qoder/skills",
         ".qoderwork/skills",
         ".kiro/skills",
+        ".opencode/skills",
     ] {
         let p = root.join(rel);
         if p.is_dir() {
@@ -376,6 +385,14 @@ fn collect_project_rule_paths(root: &Path, out: &mut Vec<PathBuf>) {
     if kiro_home.is_dir() {
         push_json_jsonc_in_dir_shallow(&kiro_home, out);
     }
+
+    // opencode — `.opencode/rules` + root opencode.json / opencode.jsonc
+    let opencode_rules = root.join(".opencode/rules");
+    if opencode_rules.is_dir() {
+        walk_rules_mdc_md(&opencode_rules, 0, 8, out);
+    }
+    push_if_file(root.join("opencode.json"), out);
+    push_if_file(root.join("opencode.jsonc"), out);
 }
 
 fn dedupe_paths(paths: &mut Vec<PathBuf>) {
@@ -888,7 +905,14 @@ fn parse_mcp_object_at(
     for (name, cfg) in map {
         let desc = match cfg {
             Value::Object(o) => {
-                let cmd = o.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                let cmd = o.get("command").map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Array(arr) => arr.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    _ => String::new(),
+                }).unwrap_or_default();
                 let args = o
                     .get("args")
                     .and_then(|v| v.as_array())
@@ -1340,6 +1364,19 @@ pub fn global_inventory(agent_id: &str) -> Result<AgentInventory, String> {
             dedupe_paths(&mut k_paths);
             push_rules_from_paths(k_paths, &mut rules);
         }
+        "opencode" => {
+            push_skills_from_roots(
+                &[
+                    home.join(".config/opencode/skills"),
+                    home.join(".config/opencode/skill"),
+                ],
+                &mut skills,
+            );
+            let config = home.join(".config/opencode/opencode.json");
+            if config.is_file() {
+                merge_mcp_from_json_files(&[config], &mut mcp);
+            }
+        }
         _ => return Err(format!("unknown agent: {agent_id}")),
     }
 
@@ -1412,6 +1449,8 @@ pub fn read_skill_document(path: &Path) -> Result<(String, String), String> {
             "hermes.md",
             "OPENCLAW.md",
             "openclaw.md",
+            "OPENCODE.md",
+            "opencode.md",
             "README.md",
             "readme.md",
         ];

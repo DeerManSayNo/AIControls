@@ -310,6 +310,7 @@ const AGENT_TITLES: Record<string, string> = {
   trae: "Trae",
   qoder: "Qoder",
   kiro: "Kiro",
+  opencode: "opencode",
 };
 
 function AgentRoute() {
