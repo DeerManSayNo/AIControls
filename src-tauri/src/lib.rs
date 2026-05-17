@@ -485,9 +485,39 @@ fn save_deepseek_settings(app: AppHandle, api_key: String) -> Result<(), String>
 
 #[tauri::command]
 async fn test_deepseek_connection(app: AppHandle) -> Result<String, String> {
-    let key = storage::load_deepseek_api_key(&app)?
-        .ok_or_else(|| "请先在下方保存 DeepSeek API Key。".to_string())?;
-    deepseek::test_ping(&key).await
+    let config = storage::load_active_ai_config(&app)?;
+    deepseek::test_ping(&config).await
+}
+
+#[tauri::command]
+fn get_ai_provider(app: AppHandle) -> Result<String, String> {
+    storage::load_ai_provider(&app)
+}
+
+#[tauri::command]
+fn save_ai_provider(app: AppHandle, provider: String) -> Result<(), String> {
+    storage::save_ai_provider(&app, provider)
+}
+
+#[tauri::command]
+fn get_glm_settings(app: AppHandle) -> Result<storage::GlmSettingsPublic, String> {
+    storage::get_glm_settings_public(&app)
+}
+
+#[tauri::command]
+fn save_glm_settings(app: AppHandle, api_key: String, api_url: String, model: String) -> Result<(), String> {
+    storage::save_glm_settings(&app, api_key, api_url, model)
+}
+
+#[tauri::command]
+async fn test_glm_connection(app: AppHandle) -> Result<String, String> {
+    // Temporarily switch to GLM, run ping, then restore provider
+    let prev_provider = storage::load_ai_provider(&app)?;
+    storage::save_ai_provider(&app, storage::GLM_PROVIDER.to_string())?;
+    let result = deepseek::test_ping(&storage::load_active_ai_config(&app)?).await;
+    // Restore previous provider
+    let _ = storage::save_ai_provider(&app, prev_provider);
+    result
 }
 
 #[tauri::command]
@@ -1420,6 +1450,11 @@ pub fn run() {
             get_agent_global_inventory,
             scan_project_directory,
             read_skill_document,
+            get_ai_provider,
+            save_ai_provider,
+            get_glm_settings,
+            save_glm_settings,
+            test_glm_connection,
             get_deepseek_settings,
             save_deepseek_settings,
             test_deepseek_connection,

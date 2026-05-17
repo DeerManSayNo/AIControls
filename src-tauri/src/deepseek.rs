@@ -8,9 +8,6 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tauri::AppHandle;
 
-const API_URL: &str = "https://api.deepseek.com/chat/completions";
-const MODEL: &str = "deepseek-chat";
-
 const SCENARIO_SLUGS: &[&str] = &[
     "dev", "office", "creative", "data", "network", "ops", "collab",
 ];
@@ -55,20 +52,29 @@ fn extract_json_object(text: &str) -> Result<Value, String> {
     serde_json::from_str(slice).map_err(|e| format!("解析模型 JSON 失败：{e}"))
 }
 
+fn provider_label(config: &storage::AiConfig) -> &str {
+    if config.provider == storage::GLM_PROVIDER {
+        "GLM"
+    } else {
+        "DeepSeek"
+    }
+}
+
 async fn chat_completion(
-    api_key: &str,
+    config: &storage::AiConfig,
     system: &str,
     user: &str,
     json_object_mode: bool,
     max_tokens: u32,
 ) -> Result<String, String> {
+    let label = provider_label(config);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| e.to_string())?;
 
     let mut body = json!({
-        "model": MODEL,
+        "model": config.model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -76,6 +82,11 @@ async fn chat_completion(
         "temperature": 0.2,
         "max_tokens": max_tokens,
     });
+    if config.provider == storage::GLM_PROVIDER {
+        if let Some(o) = body.as_object_mut() {
+            o.insert("thinking".into(), json!({"type": "disabled"}));
+        }
+    }
     if json_object_mode {
         if let Some(o) = body.as_object_mut() {
             o.insert("response_format".into(), json!({"type": "json_object"}));
@@ -83,19 +94,19 @@ async fn chat_completion(
     }
 
     let res = client
-        .post(API_URL)
-        .header("Authorization", format!("Bearer {api_key}"))
+        .post(&config.api_url)
+        .header("Authorization", format!("Bearer {}", config.api_key))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("DeepSeek 请求失败：{e}"))?;
+        .map_err(|e| format!("{label} 请求失败：{e}"))?;
 
     if !res.status().is_success() {
         let status = res.status();
         let err_text = res.text().await.unwrap_or_default();
         return Err(format!(
-            "DeepSeek 返回错误 HTTP {status}：{}",
+            "{label} 返回错误 HTTP {status}：{}",
             err_text.chars().take(400).collect::<String>()
         ));
     }
@@ -106,12 +117,12 @@ async fn chat_completion(
         .into_iter()
         .next()
         .map(|c| c.message.content)
-        .ok_or_else(|| "DeepSeek 响应缺少 choices".to_string())
+        .ok_or_else(|| format!("{label} 响应缺少 choices"))
 }
 
-pub async fn test_ping(api_key: &str) -> Result<String, String> {
+pub async fn test_ping(config: &storage::AiConfig) -> Result<String, String> {
     let reply = chat_completion(
-        api_key,
+        config,
         "You reply with exactly the word OK and nothing else.",
         "Ping.",
         false,
@@ -162,7 +173,7 @@ Output exactly one JSON object: key is entry id (string), value is brief text (s
 }
 
 async fn classify_batch(
-    api_key: &str,
+    config: &storage::AiConfig,
     batch: &[AssetEntry],
 ) -> Result<HashMap<String, String>, String> {
     let mut lines = Vec::new();
@@ -180,7 +191,7 @@ async fn classify_batch(
         lines.join("\n")
     );
 
-    let raw = chat_completion(api_key, &classify_system_prompt(), &user, true, 800).await?;
+    let raw = chat_completion(config, &classify_system_prompt(), &user, true, 800).await?;
     let v = extract_json_object(&raw)?;
     let obj = v
         .as_object()
@@ -201,15 +212,15 @@ async fn classify_batch(
 }
 
 async fn classify_batch_fill_missing(
-    api_key: &str,
+    config: &storage::AiConfig,
     chunk: &[AssetEntry],
 ) -> Result<HashMap<String, String>, String> {
-    let mut delta = classify_batch(api_key, chunk).await?;
+    let mut delta = classify_batch(config, chunk).await?;
     for e in chunk {
         if delta.contains_key(&e.id) {
             continue;
         }
-        match classify_batch(api_key, &[e.clone()]).await {
+        match classify_batch(config, &[e.clone()]).await {
             Ok(m) => delta.extend(m),
             Err(_) => { /* 单次失败则跳过该 id，下次扫描仍会尝试 */ }
         }
@@ -253,7 +264,7 @@ fn is_brief_compatible_locale(locale: &str, brief: &str) -> bool {
 }
 
 async fn summarize_batch(
-    api_key: &str,
+    config: &storage::AiConfig,
     batch: &[AssetEntry],
     locale: &str,
 ) -> Result<HashMap<String, String>, String> {
@@ -278,7 +289,7 @@ async fn summarize_batch(
             lines.join("\n")
         )
     };
-    let raw = chat_completion(api_key, &summarize_system_prompt(locale), &user, true, 1400).await?;
+    let raw = chat_completion(config, &summarize_system_prompt(locale), &user, true, 1400).await?;
     let v = extract_json_object(&raw)?;
     let obj = v
         .as_object()
@@ -297,16 +308,16 @@ async fn summarize_batch(
 }
 
 async fn summarize_batch_fill_missing(
-    api_key: &str,
+    config: &storage::AiConfig,
     chunk: &[AssetEntry],
     locale: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let mut delta = summarize_batch(api_key, chunk, locale).await?;
+    let mut delta = summarize_batch(config, chunk, locale).await?;
     for e in chunk {
         if delta.contains_key(&e.id) {
             continue;
         }
-        match summarize_batch(api_key, &[e.clone()], locale).await {
+        match summarize_batch(config, &[e.clone()], locale).await {
             Ok(m) => delta.extend(m),
             Err(_) => { /* 单次失败则跳过该 id，下次扫描仍会尝试 */ }
         }
@@ -314,14 +325,14 @@ async fn summarize_batch_fill_missing(
     Ok(delta)
 }
 
-/// 仅为尚未写入本地缓存 map 的条目调用 DeepSeek；结果持久化并写回 `inventory.scenario`。
+/// 仅为尚未写入本地缓存 map 的条目调用 AI；结果持久化并写回 `inventory.scenario`。
 pub async fn classify_inventory_missing(
     app: &AppHandle,
     mut inventory: AgentInventory,
 ) -> Result<AgentInventory, String> {
-    let api_key = match storage::load_deepseek_api_key(app)? {
-        Some(k) if !k.is_empty() => k,
-        _ => return Ok(inventory),
+    let config = match storage::load_active_ai_config(app) {
+        Ok(c) => c,
+        Err(_) => return Ok(inventory),
     };
 
     let mut map = storage::load_scenario_map(app).unwrap_or_default();
@@ -344,7 +355,7 @@ pub async fn classify_inventory_missing(
 
     const BATCH: usize = 12;
     for chunk in missing.chunks(BATCH) {
-        let delta = classify_batch_fill_missing(&api_key, chunk).await?;
+        let delta = classify_batch_fill_missing(&config, chunk).await?;
         if !delta.is_empty() {
             storage::merge_scenario_map(app, &delta)?;
             map.extend(delta);
@@ -355,16 +366,16 @@ pub async fn classify_inventory_missing(
     Ok(inventory)
 }
 
-/// 仅为尚未写入本地 brief map 的条目调用 DeepSeek；结果持久化并写回 `inventory.brief_zh`。
+/// 仅为尚未写入本地 brief map 的条目调用 AI；结果持久化并写回 `inventory.brief_zh`。
 pub async fn summarize_inventory_missing(
     app: &AppHandle,
     mut inventory: AgentInventory,
     locale: String,
 ) -> Result<AgentInventory, String> {
     let locale = if locale == "zh" { "zh" } else { "en" };
-    let api_key = match storage::load_deepseek_api_key(app)? {
-        Some(k) if !k.is_empty() => k,
-        _ => return Ok(inventory),
+    let config = match storage::load_active_ai_config(app) {
+        Ok(c) => c,
+        Err(_) => return Ok(inventory),
     };
 
     let mut map = storage::load_brief_map(app, locale).unwrap_or_default();
@@ -390,7 +401,7 @@ pub async fn summarize_inventory_missing(
 
     const BATCH: usize = 8;
     for chunk in missing.chunks(BATCH) {
-        let delta = summarize_batch_fill_missing(&api_key, chunk, locale).await?;
+        let delta = summarize_batch_fill_missing(&config, chunk, locale).await?;
         if !delta.is_empty() {
             storage::merge_brief_map(app, locale, &delta)?;
             map.extend(delta);
@@ -408,11 +419,9 @@ pub async fn resummarize_single_asset(
     locale: String,
 ) -> Result<String, String> {
     let locale = if locale == "zh" { "zh" } else { "en" };
-    let api_key = storage::load_deepseek_api_key(app)?
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let config = storage::load_active_ai_config(app)?;
 
-    let delta = summarize_batch(&api_key, &[asset.clone()], locale).await?;
+    let delta = summarize_batch(&config, &[asset.clone()], locale).await?;
     let brief = delta
         .get(&asset.id)
         .cloned()
@@ -464,14 +473,12 @@ fn resource_url_system_prompt() -> String {
         .to_string()
 }
 
-/// 根据链接文本调用 DeepSeek 生成标题、标签与备注（需已配置 API Key）。
+/// 根据链接文本调用 AI 生成标题、标签与备注（需已配置 API Key）。
 pub async fn enrich_resource_from_url(
     app: &AppHandle,
     url: String,
 ) -> Result<ResourceUrlEnrichment, String> {
-    let api_key = storage::load_deepseek_api_key(app)?
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let config = storage::load_active_ai_config(app)?;
 
     let url = url.trim().to_string();
     if url.is_empty() {
@@ -482,7 +489,7 @@ pub async fn enrich_resource_from_url(
         "链接：{}",
         serde_json::to_string(&url).map_err(|e| e.to_string())?
     );
-    let raw = chat_completion(&api_key, &resource_url_system_prompt(), &user, true, 600).await?;
+    let raw = chat_completion(&config, &resource_url_system_prompt(), &user, true, 600).await?;
     let v = extract_json_object(&raw)?;
 
     let title = v
@@ -589,9 +596,7 @@ pub async fn regenerate_categories(
     inventory: AgentInventory,
     locale: Option<String>,
 ) -> Result<Vec<CustomCategory>, String> {
-    let api_key = storage::load_deepseek_api_key(app)?
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let config = storage::load_active_ai_config(app)?;
 
     let all_entries: Vec<&AssetEntry> = inventory
         .skills
@@ -618,7 +623,7 @@ pub async fn regenerate_categories(
     );
 
     let raw = chat_completion(
-        &api_key,
+        &config,
         &regenerate_categories_system_prompt(locale.as_deref().unwrap_or("zh")),
         &user,
         true,
@@ -685,14 +690,12 @@ pub async fn translate_custom_categories(
     if categories.iter().all(|c| c.label_en.as_deref().unwrap_or("").trim().len() > 0) {
         return Ok(categories);
     }
-    let api_key = storage::load_deepseek_api_key(app)?
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let config = storage::load_active_ai_config(app)?;
     let input = serde_json::to_string(&categories).map_err(|e| e.to_string())?;
     let system = r#"You translate AIControls category labels for UI chips.
 Input is a JSON array with slug and labelZh. Return the same array order with slug and labelEn.
 labelEn must be natural English, 1-3 words, Title Case. Do not change slug. Output JSON only."#;
-    let raw = chat_completion(&api_key, system, &input, true, 500).await?;
+    let raw = chat_completion(&config, system, &input, true, 500).await?;
     let v = extract_json_object(&raw)?;
     let arr = v.as_array().ok_or_else(|| "模型返回的不是 JSON 数组".to_string())?;
     let mut en_by_slug: HashMap<String, String> = HashMap::new();
@@ -721,9 +724,7 @@ pub async fn reclassify_with_new_categories(
     inventory: AgentInventory,
     categories: Vec<CustomCategory>,
 ) -> Result<HashMap<String, String>, String> {
-    let api_key = storage::load_deepseek_api_key(app)?
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let config = storage::load_active_ai_config(app)?;
 
     let all_entries: Vec<AssetEntry> = inventory
         .skills
@@ -759,7 +760,7 @@ pub async fn reclassify_with_new_categories(
             lines.join("\n")
         );
 
-        match chat_completion(&api_key, &system, &user, true, 800).await {
+        match chat_completion(&config, &system, &user, true, 800).await {
             Ok(raw) => {
                 if let Ok(v) = extract_json_object(&raw) {
                     if let Some(obj) = v.as_object() {
@@ -796,7 +797,7 @@ pub async fn reclassify_with_new_categories(
             "请为下列条目分类（输出 JSON 对象 id→slug）：\n{}",
             lines.join("\n")
         );
-        if let Ok(raw) = chat_completion(&api_key, &system, &user, true, 200).await {
+        if let Ok(raw) = chat_completion(&config, &system, &user, true, 200).await {
             if let Ok(v) = extract_json_object(&raw) {
                 if let Some(obj) = v.as_object() {
                     for (id, val) in obj {
@@ -859,9 +860,7 @@ pub async fn estimate_project_progress(
     app: &AppHandle,
     root: String,
 ) -> Result<ProjectProgressResult, String> {
-    let api_key = storage::load_deepseek_api_key(app)?
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| "请先在设置中保存 DeepSeek API Key。".to_string())?;
+    let config = storage::load_active_ai_config(app)?;
 
     let root_path = std::path::Path::new(root.trim());
     if !root_path.is_dir() {
@@ -1010,7 +1009,7 @@ pub async fn estimate_project_progress(
         context_parts.join("\n")
     );
 
-    let raw = chat_completion(&api_key, &progress_system_prompt(), &user, true, 300).await?;
+    let raw = chat_completion(&config, &progress_system_prompt(), &user, true, 300).await?;
     let v = extract_json_object(&raw)?;
 
     let progress = v

@@ -205,7 +205,205 @@ fn save_brief_map(
     Ok(())
 }
 
-// --- Gitee OAuth / backup ---
+// --- AI provider selection + GLM settings ---
+
+pub const DEEPSEEK_PROVIDER: &str = "deepseek";
+pub const GLM_PROVIDER: &str = "glm";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfig {
+    pub api_key: String,
+    pub api_url: String,
+    pub model: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlmSettingsPublic {
+    pub api_key_configured: bool,
+    pub api_url: String,
+    pub model: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GlmSettingsFile {
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    api_url: String,
+    #[serde(default)]
+    model: String,
+}
+
+impl Default for GlmSettingsFile {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            api_url: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions".into(),
+            model: "GLM-5.1".into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Default)]
+struct AiProviderFile {
+    #[serde(default)]
+    provider: String,
+}
+
+fn ai_provider_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("ai_provider.json"))
+}
+
+fn glm_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_local_dir(app)?.join("glm_settings.json"))
+}
+
+pub fn load_ai_provider(app: &AppHandle) -> Result<String, String> {
+    let path = ai_provider_path(app)?;
+    if !path.is_file() {
+        return Ok(DEEPSEEK_PROVIDER.to_string());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let file: AiProviderFile =
+        serde_json::from_str(&text).map_err(|e| format!("读取 AI provider 配置失败：{e}"))?;
+    let p = file.provider.trim().to_lowercase();
+    if p == GLM_PROVIDER {
+        Ok(GLM_PROVIDER.to_string())
+    } else {
+        Ok(DEEPSEEK_PROVIDER.to_string())
+    }
+}
+
+pub fn save_ai_provider(app: &AppHandle, provider: String) -> Result<(), String> {
+    let path = ai_provider_path(app)?;
+    ensure_parent(&path)?;
+    let file = AiProviderFile {
+        provider: provider.trim().to_lowercase(),
+    };
+    let json =
+        serde_json::to_string_pretty(&file).map_err(|e| format!("序列化 AI provider 配置失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入 AI provider 配置失败：{e}"))?;
+    Ok(())
+}
+
+pub fn load_active_ai_config(app: &AppHandle) -> Result<AiConfig, String> {
+    let provider = load_ai_provider(app)?;
+    match provider.as_str() {
+        GLM_PROVIDER => {
+            let path = glm_settings_path(app)?;
+            let file = if path.is_file() {
+                let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                serde_json::from_str::<GlmSettingsFile>(&text)
+                    .map_err(|e| format!("读取 GLM 配置失败：{e}"))?
+            } else {
+                GlmSettingsFile::default()
+            };
+            let key = file.api_key.trim().to_string();
+            if key.is_empty() {
+                return Err("请先在设置中保存 GLM API Key。".to_string());
+            }
+            let url = if file.api_url.trim().is_empty() {
+                "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions".to_string()
+            } else {
+                file.api_url.trim().to_string()
+            };
+            let model = if file.model.trim().is_empty() {
+                "GLM-5.1".to_string()
+            } else {
+                file.model.trim().to_string()
+            };
+            Ok(AiConfig {
+                api_key: key,
+                api_url: url,
+                model,
+                provider: GLM_PROVIDER.to_string(),
+            })
+        }
+        _ => {
+            // DeepSeek (default)
+            let key = load_deepseek_api_key(app)?
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| "请先在设置中保存 API Key。".to_string())?;
+            Ok(AiConfig {
+                api_key: key,
+                api_url: "https://api.deepseek.com/chat/completions".to_string(),
+                model: "deepseek-chat".to_string(),
+                provider: DEEPSEEK_PROVIDER.to_string(),
+            })
+        }
+    }
+}
+
+pub fn get_glm_settings_public(app: &AppHandle) -> Result<GlmSettingsPublic, String> {
+    let path = glm_settings_path(app)?;
+    if !path.is_file() {
+        let def = GlmSettingsFile::default();
+        return Ok(GlmSettingsPublic {
+            api_key_configured: false,
+            api_url: def.api_url,
+            model: def.model,
+        });
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let file: GlmSettingsFile =
+        serde_json::from_str(&text).map_err(|e| format!("读取 GLM 配置失败：{e}"))?;
+    let configured = !file.api_key.trim().is_empty();
+    let url = if file.api_url.trim().is_empty() {
+        "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+    } else {
+        file.api_url.trim()
+    }
+    .to_string();
+    let model = if file.model.trim().is_empty() {
+        "GLM-5.1"
+    } else {
+        file.model.trim()
+    }
+    .to_string();
+    Ok(GlmSettingsPublic {
+        api_key_configured: configured,
+        api_url: url,
+        model,
+    })
+}
+
+pub fn save_glm_settings(
+    app: &AppHandle,
+    api_key: String,
+    api_url: String,
+    model: String,
+) -> Result<(), String> {
+    let path = glm_settings_path(app)?;
+    ensure_parent(&path)?;
+    let file = GlmSettingsFile {
+        api_key: api_key.trim().to_string(),
+        api_url: api_url.trim().to_string(),
+        model: model.trim().to_string(),
+    };
+    let json =
+        serde_json::to_string_pretty(&file).map_err(|e| format!("序列化 GLM 配置失败：{e}"))?;
+    fs::write(path, json).map_err(|e| format!("写入 GLM 配置失败：{e}"))?;
+    Ok(())
+}
+
+pub fn load_glm_api_key(app: &AppHandle) -> Result<Option<String>, String> {
+    let path = glm_settings_path(app)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let file: GlmSettingsFile =
+        serde_json::from_str(&text).map_err(|e| format!("读取 GLM 配置失败：{e}"))?;
+    let k = file.api_key.trim().to_string();
+    if k.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(k))
+    }
+}
 
 // --- Custom categories (persisted after reclassify confirm) ---
 

@@ -7,6 +7,13 @@ import {
   testDeepseekConnection,
 } from "../api/deepseek";
 import {
+  getAiProvider,
+  saveAiProvider,
+  getGlmSettings,
+  saveGlmSettings,
+  testGlmConnection,
+} from "../api/glm";
+import {
   getGiteeSettings,
   saveGiteeApp,
   giteeOauthLogin,
@@ -40,6 +47,14 @@ export default function SettingsPage() {
   const [settingsRefreshKey, setSettingsRefreshKey] = useState(0);
   const [settingsReloading, setSettingsReloading] = useState(false);
 
+  const [aiProvider, setAiProvider] = useState("deepseek");
+  const [glmApiKeyInput, setGlmApiKeyInput] = useState("");
+  const [glmApiUrlInput, setGlmApiUrlInput] = useState("");
+  const [glmModelInput, setGlmModelInput] = useState("");
+  const [glmConfigured, setGlmConfigured] = useState(false);
+  const [glmSaveHint, setGlmSaveHint] = useState<string | null>(null);
+  const [glmTestHint, setGlmTestHint] = useState<string | null>(null);
+
   const [giteeClientId, setGiteeClientId] = useState("");
   const [giteeSecret, setGiteeSecret] = useState("");
   const [giteeRepo, setGiteeRepo] = useState("");
@@ -53,8 +68,8 @@ export default function SettingsPage() {
   useEffect(() => {
     let cancelled = false;
     setSettingsReloading(true);
-    Promise.all([getDeepseekSettings(), getGiteeSettings()])
-      .then(([ds, gs]) => {
+    Promise.all([getDeepseekSettings(), getGiteeSettings(), getAiProvider(), getGlmSettings()])
+      .then(([ds, gs, provider, glm]) => {
         if (cancelled) return;
         setSettingsReloading(false);
         if (!ds) {
@@ -68,6 +83,13 @@ export default function SettingsPage() {
         if (gs) {
           setGiteeClientId(gs.clientIdSaved ?? "");
           setGiteeRepo(gs.savedRepoName ?? "");
+        }
+
+        setAiProvider(provider ?? "deepseek");
+        if (glm) {
+          setGlmConfigured(glm.apiKeyConfigured);
+          setGlmApiUrlInput(glm.apiUrl);
+          setGlmModelInput(glm.model);
         }
       })
       .catch(() => {
@@ -100,6 +122,37 @@ export default function SettingsPage() {
     const r = await testDeepseekConnection();
     setBusy(false);
     setTestHint(
+      r.ok ? `连接成功：${r.message}` : `连接失败：${r.message}`,
+    );
+  }
+
+  async function onProviderChange(newProvider: string) {
+    setBusy(true);
+    await saveAiProvider(newProvider);
+    setAiProvider(newProvider);
+    setBusy(false);
+  }
+
+  async function onGlmSave() {
+    setGlmSaveHint(null);
+    setBusy(true);
+    const ok = await saveGlmSettings(glmApiKeyInput, glmApiUrlInput, glmModelInput);
+    setBusy(false);
+    if (!ok) {
+      setGlmSaveHint("保存失败：请在桌面端运行并检查写入权限。");
+      return;
+    }
+    setGlmSaveHint("已保存到本机应用数据目录。");
+    setGlmConfigured(glmApiKeyInput.trim().length > 0);
+    setGlmApiKeyInput("");
+  }
+
+  async function onGlmTest() {
+    setGlmTestHint(null);
+    setBusy(true);
+    const r = await testGlmConnection();
+    setBusy(false);
+    setGlmTestHint(
       r.ok ? `连接成功：${r.message}` : `连接失败：${r.message}`,
     );
   }
@@ -240,82 +293,225 @@ export default function SettingsPage() {
 
       <section style={{ marginTop: "1.25rem" }}>
         <div className="settings-block-head">
-          <h3 className="settings-block-title">DeepSeek</h3>
+          <h3 className="settings-block-title">{locale === "zh" ? "AI 提供方" : "AI Provider"}</h3>
           <InfoTooltip
-            label={locale === "zh" ? "DeepSeek 说明" : "About DeepSeek"}
+            label={locale === "zh" ? "AI 提供方说明" : "About AI Provider"}
             content={
               locale === "zh"
-                ? "填写 DeepSeek API Key。密钥仅保存在本机，不上传到 AIControls 服务端。扫描 Agent / 项目 / 全部时，应用会为未缓存的 Skill、MCP、Rules 生成场景分类并写入本地；后续优先读取缓存，仅在有新条目时再请求模型。"
-                : "Enter DeepSeek API key. The key is stored locally only. When scanning agents/projects/assets, uncached Skill/MCP/Rule entries are classified and cached locally."
+                ? "选择用于 AI 能力的模型提供方。DeepSeek 使用 deepseek-chat，GLM 使用智谱 GLM-5.1 / GLM-4.7。密钥仅保存在本机，不上传到 AIControls 服务端。"
+                : "Select the AI model provider. DeepSeek uses deepseek-chat, GLM uses Zhipu GLM-5.1 / GLM-4.7. Keys are stored locally only."
             }
           />
         </div>
-        {loadErr ? (
-          <p className="muted" style={{ margin: "0 0 0.75rem" }}>
-            {loadErr}
-          </p>
-        ) : null}
-
-        <label
-          htmlFor="deepseek-api-key"
-          style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.85rem" }}
-        >
-          API Key
-        </label>
-        <input
-          id="deepseek-api-key"
-          type="password"
-          autoComplete="off"
-          className="settings-input"
-          placeholder={
-            configured
-              ? locale === "zh"
-                ? "密钥已保存；输入新密钥可覆盖"
-                : "Key saved; enter a new key to replace"
-              : locale === "zh"
-                ? "例如 sk-…"
-                : "e.g. sk-…"
-          }
-          value={apiKeyInput}
-          onChange={(e) => setApiKeyInput(e.target.value)}
-        />
-
-        <div
-          style={{
-            display: "flex",
-            gap: "0.55rem",
-            flexWrap: "wrap",
-            marginTop: "0.85rem",
-          }}
-        >
+        <div className="seg" role="tablist" aria-label="AI Provider" style={{ marginBottom: "1rem" }}>
           <button
             type="button"
-            className="btn-icon"
+            role="tab"
+            aria-selected={aiProvider === "deepseek"}
+            className={`seg__item${aiProvider === "deepseek" ? " active" : ""}`}
             disabled={busy}
-            onClick={onSave}
+            onClick={() => onProviderChange("deepseek")}
           >
-            {locale === "zh" ? "保存" : "Save"}
+            DeepSeek
           </button>
           <button
             type="button"
-            className="btn-icon"
+            role="tab"
+            aria-selected={aiProvider === "glm"}
+            className={`seg__item${aiProvider === "glm" ? " active" : ""}`}
             disabled={busy}
-            onClick={onTest}
+            onClick={() => onProviderChange("glm")}
           >
-            {locale === "zh" ? "测试连接" : "Test connection"}
+            GLM
           </button>
         </div>
 
-        {saveHint ? (
-          <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
-            {saveHint}
-          </p>
-        ) : null}
-        {testHint ? (
-          <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
-            {testHint}
-          </p>
-        ) : null}
+        {aiProvider === "deepseek" ? (
+          <>
+            <div className="settings-block-head">
+              <h3 className="settings-block-title">DeepSeek</h3>
+              <InfoTooltip
+                label={locale === "zh" ? "DeepSeek 说明" : "About DeepSeek"}
+                content={
+                  locale === "zh"
+                    ? "填写 DeepSeek API Key。扫描 Agent / 项目 / 全部时，应用会为未缓存的 Skill、MCP、Rules 生成场景分类并写入本地；后续优先读取缓存，仅在有新条目时再请求模型。"
+                    : "Enter DeepSeek API key. When scanning agents/projects/assets, uncached entries are classified and cached locally."
+                }
+              />
+            </div>
+            {loadErr ? (
+              <p className="muted" style={{ margin: "0 0 0.75rem" }}>
+                {loadErr}
+              </p>
+            ) : null}
+
+            <label
+              htmlFor="deepseek-api-key"
+              style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.85rem" }}
+            >
+              API Key
+            </label>
+            <input
+              id="deepseek-api-key"
+              type="password"
+              autoComplete="off"
+              className="settings-input"
+              placeholder={
+                configured
+                  ? locale === "zh"
+                    ? "密钥已保存；输入新密钥可覆盖"
+                    : "Key saved; enter a new key to replace"
+                  : locale === "zh"
+                    ? "例如 sk-…"
+                    : "e.g. sk-…"
+              }
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.55rem",
+                flexWrap: "wrap",
+                marginTop: "0.85rem",
+              }}
+            >
+              <button
+                type="button"
+                className="btn-icon"
+                disabled={busy}
+                onClick={onSave}
+              >
+                {locale === "zh" ? "保存" : "Save"}
+              </button>
+              <button
+                type="button"
+                className="btn-icon"
+                disabled={busy}
+                onClick={onTest}
+              >
+                {locale === "zh" ? "测试连接" : "Test connection"}
+              </button>
+            </div>
+
+            {saveHint ? (
+              <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
+                {saveHint}
+              </p>
+            ) : null}
+            {testHint ? (
+              <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
+                {testHint}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="settings-block-head">
+              <h3 className="settings-block-title">GLM（智谱）</h3>
+              <InfoTooltip
+                label={locale === "zh" ? "GLM 说明" : "About GLM"}
+                content={
+                  locale === "zh"
+                    ? "填写 GLM API Key。支持 GLM-5.1、GLM-4.7 等模型。密钥仅保存在本机。"
+                    : "Enter GLM API key. Supports GLM-5.1, GLM-4.7 and more. Key stored locally only."
+                }
+              />
+            </div>
+
+            <label
+              htmlFor="glm-api-key"
+              style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.85rem" }}
+            >
+              API Key
+            </label>
+            <input
+              id="glm-api-key"
+              type="password"
+              autoComplete="off"
+              className="settings-input"
+              placeholder={
+                glmConfigured
+                  ? locale === "zh"
+                    ? "密钥已保存；输入新密钥可覆盖"
+                    : "Key saved; enter a new key to replace"
+                  : locale === "zh"
+                    ? "例如 7b10…"
+                    : "e.g. 7b10…"
+              }
+              value={glmApiKeyInput}
+              onChange={(e) => setGlmApiKeyInput(e.target.value)}
+            />
+
+            <label
+              htmlFor="glm-api-url"
+              style={{ display: "block", margin: "0.75rem 0 0.35rem", fontSize: "0.85rem" }}
+            >
+              {locale === "zh" ? "API 地址" : "API URL"}
+            </label>
+            <input
+              id="glm-api-url"
+              className="settings-input"
+              autoComplete="off"
+              placeholder="https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+              value={glmApiUrlInput}
+              onChange={(e) => setGlmApiUrlInput(e.target.value)}
+            />
+
+            <label
+              htmlFor="glm-model"
+              style={{ display: "block", margin: "0.75rem 0 0.35rem", fontSize: "0.85rem" }}
+            >
+              {locale === "zh" ? "模型" : "Model"}
+            </label>
+            <input
+              id="glm-model"
+              className="settings-input"
+              autoComplete="off"
+              placeholder="GLM-5.1"
+              value={glmModelInput}
+              onChange={(e) => setGlmModelInput(e.target.value)}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.55rem",
+                flexWrap: "wrap",
+                marginTop: "0.85rem",
+              }}
+            >
+              <button
+                type="button"
+                className="btn-icon"
+                disabled={busy}
+                onClick={onGlmSave}
+              >
+                {locale === "zh" ? "保存" : "Save"}
+              </button>
+              <button
+                type="button"
+                className="btn-icon"
+                disabled={busy}
+                onClick={onGlmTest}
+              >
+                {locale === "zh" ? "测试连接" : "Test connection"}
+              </button>
+            </div>
+
+            {glmSaveHint ? (
+              <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
+                {glmSaveHint}
+              </p>
+            ) : null}
+            {glmTestHint ? (
+              <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
+                {glmTestHint}
+              </p>
+            ) : null}
+          </>
+        )}
       </section>
 
       <section style={{ marginTop: "2rem" }}>
