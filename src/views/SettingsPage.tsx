@@ -21,7 +21,13 @@ import {
   giteeDisconnect,
   giteeRestoreFromRepoUrl,
 } from "../api/gitee";
-import { clearHiddenSidebarAgents } from "../api/agents";
+import {
+  clearHiddenSidebarAgents,
+  detectClaudeHookStatus,
+  installClaudeHooks,
+  removeClaudeHooks,
+  type ClaudeHookStatus,
+} from "../api/agents";
 
 function InfoTooltip({ label, content }: { label: string; content: string }) {
   return (
@@ -64,12 +70,14 @@ export default function SettingsPage() {
   > | null>(null);
   const [giteeHint, setGiteeHint] = useState<string | null>(null);
   const [sidebarAgentsHint, setSidebarAgentsHint] = useState<string | null>(null);
+  const [claudeHookStatus, setClaudeHookStatus] = useState<ClaudeHookStatus | null>(null);
+  const [claudeHookHint, setClaudeHookHint] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setSettingsReloading(true);
-    Promise.all([getDeepseekSettings(), getGiteeSettings(), getAiProvider(), getGlmSettings()])
-      .then(([ds, gs, provider, glm]) => {
+    Promise.all([getDeepseekSettings(), getGiteeSettings(), getAiProvider(), getGlmSettings(), detectClaudeHookStatus()])
+      .then(([ds, gs, provider, glm, hookStatus]) => {
         if (cancelled) return;
         setSettingsReloading(false);
         if (!ds) {
@@ -90,6 +98,11 @@ export default function SettingsPage() {
           setGlmConfigured(glm.apiKeyConfigured);
           setGlmApiUrlInput(glm.apiUrl);
           setGlmModelInput(glm.model);
+        }
+        if (!("error" in hookStatus)) {
+          setClaudeHookStatus(hookStatus);
+        } else {
+          setClaudeHookHint(hookStatus.error);
         }
       })
       .catch(() => {
@@ -207,6 +220,42 @@ export default function SettingsPage() {
     setGiteeHint(r.ok ? r.message : r.message);
   }
 
+  async function refreshClaudeHookStatus() {
+    const result = await detectClaudeHookStatus();
+    if ("error" in result) {
+      setClaudeHookHint(result.error);
+      return;
+    }
+    setClaudeHookStatus(result);
+    setClaudeHookHint(null);
+  }
+
+  async function onInstallClaudeHooks() {
+    setClaudeHookHint(null);
+    setBusy(true);
+    const result = await installClaudeHooks();
+    setBusy(false);
+    if ("error" in result) {
+      setClaudeHookHint(result.error);
+      return;
+    }
+    setClaudeHookStatus(result);
+    setClaudeHookHint(locale === "zh" ? "Claude hook 已安装或刷新。" : "Claude hook installed or refreshed.");
+  }
+
+  async function onRemoveClaudeHooks() {
+    setClaudeHookHint(null);
+    setBusy(true);
+    const result = await removeClaudeHooks();
+    setBusy(false);
+    if ("error" in result) {
+      setClaudeHookHint(result.error);
+      return;
+    }
+    setClaudeHookStatus(result);
+    setClaudeHookHint(locale === "zh" ? "Claude hook 已移除。" : "Claude hook removed.");
+  }
+
   return (
     <div className="card settings-page">
       <div className="page-header__title-bar">
@@ -287,6 +336,62 @@ export default function SettingsPage() {
         {sidebarAgentsHint ? (
           <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
             {sidebarAgentsHint}
+          </p>
+        ) : null}
+      </section>
+
+      <section style={{ marginTop: "1.25rem" }}>
+        <div className="settings-block-head">
+          <h3 className="settings-block-title">{t("settings.claudeHooks")}</h3>
+        </div>
+        <p className="muted" style={{ margin: "0 0 0.75rem", fontSize: "0.85rem" }}>
+          {t("settings.claudeHooksHint")}
+        </p>
+        <p className="muted" style={{ margin: "0 0 0.5rem", fontSize: "0.85rem" }}>
+          {locale === "zh" ? "当前状态：" : "Status: "}
+          {claudeHookStatus?.installed
+            ? t("settings.claudeHooksInstalled")
+            : t("settings.claudeHooksNotInstalled")}
+        </p>
+        {claudeHookStatus ? (
+          <>
+            <p className="muted" style={{ margin: "0 0 0.35rem", fontSize: "0.82rem" }}>
+              {t("settings.claudeHooksSettingsPath")}: {claudeHookStatus.settingsPath}
+            </p>
+            <p className="muted" style={{ margin: "0 0 0.75rem", fontSize: "0.82rem" }}>
+              {t("settings.claudeHooksBridgePath")}: {claudeHookStatus.bridgeScriptPath}
+            </p>
+          </>
+        ) : null}
+        <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn-icon"
+            disabled={busy}
+            onClick={onInstallClaudeHooks}
+          >
+            {t("settings.claudeHooksInstall")}
+          </button>
+          <button
+            type="button"
+            className="btn-icon"
+            disabled={busy}
+            onClick={refreshClaudeHookStatus}
+          >
+            {t("settings.claudeHooksRefresh")}
+          </button>
+          <button
+            type="button"
+            className="btn-icon"
+            disabled={busy}
+            onClick={onRemoveClaudeHooks}
+          >
+            {t("settings.claudeHooksRemove")}
+          </button>
+        </div>
+        {claudeHookHint ? (
+          <p className="muted" style={{ marginTop: "0.55rem", fontSize: "0.85rem" }}>
+            {claudeHookHint}
           </p>
         ) : null}
       </section>

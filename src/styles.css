@@ -7146,7 +7146,8 @@ html:has(.float-ball) #root {
 }
 
 .float-ball:hover,
-.float-ball--hovering {
+.float-ball--hovering,
+.float-ball--notifying {
   opacity: 1;
   transform: translateX(-50%) translateY(-2px) scale(1.06);
   box-shadow:
@@ -7155,6 +7156,10 @@ html:has(.float-ball) #root {
     inset 0 1px 1px rgba(255, 255, 255, 0.94),
     inset 1px 1px 4px rgba(255, 255, 255, 0.4),
     inset -2px -3px 6px rgba(42, 47, 42, 0.06);
+}
+
+.float-ball--notifying {
+  animation: float-ball-notify-pulse 1s ease-in-out infinite;
 }
 
 .float-ball__core {
@@ -7198,8 +7203,31 @@ html:has(.float-ball) #root {
     transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+@keyframes float-ball-notify-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 10px 22px rgba(31, 34, 31, 0.12),
+      0 2px 6px rgba(31, 34, 31, 0.08),
+      0 0 0 0 rgba(20, 184, 166, 0.34),
+      inset 0 1px 1px rgba(255, 255, 255, 0.88),
+      inset 1px 1px 4px rgba(255, 255, 255, 0.36),
+      inset -2px -3px 6px rgba(42, 47, 42, 0.05);
+  }
+  50% {
+    box-shadow:
+      0 14px 30px rgba(31, 34, 31, 0.18),
+      0 4px 12px rgba(31, 34, 31, 0.12),
+      0 0 0 7px rgba(20, 184, 166, 0.08),
+      inset 0 1px 1px rgba(255, 255, 255, 0.96),
+      inset 1px 1px 4px rgba(255, 255, 255, 0.42),
+      inset -2px -3px 6px rgba(42, 47, 42, 0.06);
+  }
+}
+
 .float-ball:hover .float-ball__sheen,
-.float-ball--hovering .float-ball__sheen {
+.float-ball--hovering .float-ball__sheen,
+.float-ball--notifying .float-ball__sheen {
   opacity: 0.72;
   transform: translate(2px, -1px) rotate(-28deg);
 }

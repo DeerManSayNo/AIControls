@@ -11,11 +11,19 @@ mod scan;
 mod skill_copy;
 mod storage;
 
+use dirs::home_dir;
 use scan::AgentInventory;
-use serde::Serialize;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    io::{BufRead, BufReader},
+    net::TcpListener,
+    path::Path,
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -26,6 +34,21 @@ use tauri::{
 const MAIN_WINDOW_LABEL: &str = "main";
 const FLOAT_BALL_WINDOW_LABEL: &str = "float-ball";
 const FLOAT_BALL_HOVER_EVENT: &str = "float-ball-hover-state";
+const CLAUDE_EXECUTION_STATE_EVENT: &str = "claude-execution-state";
+const CLAUDE_COMPLETION_PENDING_EVENT: &str = "claude-completion-pending";
+const CLAUDE_COMPLETION_PORT: u16 = 38971;
+const CLAUDE_HOOK_SETTINGS_RELATIVE_PATH: &str = ".claude/settings.json";
+const HOOK_SCRIPT_RELATIVE_PATH: &str = "scripts/install-live-island-hooks.mjs";
+const BRIDGE_SCRIPT_RELATIVE_PATH: &str = "Library/Application Support/com.aicontrols.desktop/live-island-bridge.mjs";
+const REQUIRED_CLAUDE_HOOK_EVENTS: &[&str] = &[
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
+    "Stop",
+    "StopFailure",
+];
 const FLOAT_BALL_HOVER_POLL_MS: u64 = 80;
 const TRAY_SHOW_MAIN_ID: &str = "show-main";
 const TRAY_QUIT_ID: &str = "quit";
@@ -42,6 +65,196 @@ struct FloatBallHoverPayload {
     inside: bool,
     x: f64,
     y: f64,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeHookMessage {
+    #[serde(rename = "type")]
+    message_type: String,
+    cwd: String,
+    session_id: Option<String>,
+    state: Option<String>,
+    tool_name: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeExecutionStatePayload {
+    cwd: String,
+    session_id: Option<String>,
+    state: String,
+    tool_name: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCompletionPendingPayload {
+    cwd: String,
+    session_id: Option<String>,
+}
+
+#[derive(Default)]
+struct ClaudeCompletionState {
+    pending: Mutex<Option<ClaudeCompletionPendingPayload>>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeHookStatus {
+    installed: bool,
+    settings_path: String,
+    bridge_script_path: String,
+}
+
+fn detect_claude_hook_status() -> Result<ClaudeHookStatus, String> {
+    let home = home_dir().ok_or_else(|| "无法确定用户目录".to_string())?;
+    let settings_path = home.join(CLAUDE_HOOK_SETTINGS_RELATIVE_PATH);
+    let bridge_script_path = home.join(BRIDGE_SCRIPT_RELATIVE_PATH);
+    let installed = settings_has_managed_claude_hook(&settings_path)?;
+    Ok(ClaudeHookStatus {
+        installed,
+        settings_path: settings_path.to_string_lossy().into_owned(),
+        bridge_script_path: bridge_script_path.to_string_lossy().into_owned(),
+    })
+}
+
+fn settings_has_managed_claude_hook(settings_path: &Path) -> Result<bool, String> {
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+
+    let raw = fs::read_to_string(settings_path)
+        .map_err(|e| format!("读取 Claude 设置失败: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 Claude 设置失败: {e}"))?;
+    let Some(hooks) = json.get("hooks") else {
+        return Ok(false);
+    };
+    let Some(stop_hooks) = hooks.get("Stop") else {
+        return Ok(false);
+    };
+    let Some(entries) = stop_hooks.as_array() else {
+        return Ok(false);
+    };
+
+    for entry in entries {
+        let Some(hook_list) = entry.get("hooks").and_then(|value| value.as_array()) else {
+            continue;
+        };
+        for hook in hook_list {
+            let Some(command) = hook.get("command").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            if command.contains("live-island-bridge.mjs") {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn run_hook_installer(script_path: &Path) -> Result<(), String> {
+    if !script_path.is_file() {
+        return Err(format!("未找到 hook 安装脚本: {}", script_path.display()));
+    }
+
+    let status = Command::new("node")
+        .arg(script_path)
+        .status()
+        .map_err(|e| format!("执行 hook 安装脚本失败: {e}"))?;
+    if !status.success() {
+        return Err("hook 安装脚本执行失败".into());
+    }
+    Ok(())
+}
+
+fn remove_managed_claude_hooks(settings_path: &Path) -> Result<(), String> {
+    if !settings_path.exists() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(settings_path)
+        .map_err(|e| format!("读取 Claude 设置失败: {e}"))?;
+    let mut json: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析 Claude 设置失败: {e}"))?;
+    let Some(hooks) = json.get_mut("hooks").and_then(|value| value.as_object_mut()) else {
+        return Ok(());
+    };
+    let Some(stop_hooks) = hooks.get_mut("Stop").and_then(|value| value.as_array_mut()) else {
+        return Ok(());
+    };
+
+    stop_hooks.retain(|entry| {
+        let Some(hook_list) = entry.get("hooks").and_then(|value| value.as_array()) else {
+            return true;
+        };
+        !hook_list.iter().any(|hook| {
+            hook.get("command")
+                .and_then(|value| value.as_str())
+                .is_some_and(|command| command.contains("live-island-bridge.mjs"))
+        })
+    });
+
+    fs::write(
+        settings_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&json)
+                .map_err(|e| format!("写回 Claude 设置失败: {e}"))?
+        ),
+    )
+    .map_err(|e| format!("写回 Claude 设置失败: {e}"))?;
+    Ok(())
+}
+
+fn emit_pending_claude_completion(app: &AppHandle, payload: ClaudeCompletionPendingPayload) {
+    let state = app.state::<ClaudeCompletionState>();
+    if let Ok(mut pending) = state.pending.lock() {
+        *pending = Some(payload.clone());
+    }
+    if let Some(ball) = app.get_webview_window(FLOAT_BALL_WINDOW_LABEL) {
+        let _ = ball.emit(CLAUDE_COMPLETION_PENDING_EVENT, payload);
+    }
+}
+
+fn start_claude_completion_listener(app: AppHandle) {
+    tauri::async_runtime::spawn_blocking(move || {
+        let listener = match TcpListener::bind(("127.0.0.1", CLAUDE_COMPLETION_PORT)) {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else {
+                continue;
+            };
+            let reader = BufReader::new(stream);
+            for line in reader.lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let Ok(message) = serde_json::from_str::<ClaudeCompletionMessage>(trimmed) else {
+                    continue;
+                };
+                if message.message_type != "claude-complete" {
+                    continue;
+                }
+                emit_pending_claude_completion(
+                    &app,
+                    ClaudeCompletionPendingPayload {
+                        cwd: message.cwd,
+                        session_id: message.session_id,
+                    },
+                );
+            }
+        }
+    });
 }
 
 fn latest_file_mtime_in_dir(root: &std::path::Path) -> Result<i64, String> {
@@ -349,6 +562,52 @@ fn setup_tray(app: &mut tauri::App, is_quitting: Arc<AtomicBool>) -> tauri::Resu
 
     tray.build(app)?;
     Ok(())
+}
+
+#[tauri::command]
+fn focus_main_project(app: AppHandle, path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("路径为空".into());
+    }
+
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "未找到主窗口".to_string())?;
+    window.show().map_err(|e| format!("显示主窗口失败: {e}"))?;
+    window
+        .set_focus()
+        .map_err(|e| format!("聚焦主窗口失败: {e}"))?;
+    window
+        .emit("main-navigate", path)
+        .map_err(|e| format!("跳转项目失败: {e}"))?;
+
+    let state = app.state::<ClaudeCompletionState>();
+    if let Ok(mut pending) = state.pending.lock() {
+        *pending = None;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn detect_claude_hook_status_command() -> Result<ClaudeHookStatus, String> {
+    detect_claude_hook_status()
+}
+
+#[tauri::command]
+fn install_claude_hooks_command() -> Result<ClaudeHookStatus, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("读取当前目录失败: {e}"))?;
+    run_hook_installer(&cwd.join(HOOK_SCRIPT_RELATIVE_PATH))?;
+    detect_claude_hook_status()
+}
+
+#[tauri::command]
+fn remove_claude_hooks_command() -> Result<ClaudeHookStatus, String> {
+    let home = home_dir().ok_or_else(|| "无法确定用户目录".to_string())?;
+    let settings_path = home.join(CLAUDE_HOOK_SETTINGS_RELATIVE_PATH);
+    remove_managed_claude_hooks(&settings_path)?;
+    detect_claude_hook_status()
 }
 
 #[tauri::command]
@@ -1405,6 +1664,7 @@ pub fn run() {
     let tray_is_quitting = Arc::clone(&is_quitting);
 
     tauri::Builder::default()
+        .manage(ClaudeCompletionState::default())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(move |window, event| {
             if window.label() == MAIN_WINDOW_LABEL {
@@ -1431,6 +1691,7 @@ pub fn run() {
             setup_tray(app, Arc::clone(&tray_is_quitting))?;
             configure_float_ball(app.handle());
             start_float_ball_hover_watcher(app.handle().clone());
+            start_claude_completion_listener(app.handle().clone());
             gitee::sync_ui_schedule_next_in_secs(300);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1470,6 +1731,10 @@ pub fn run() {
             reset_all_categories,
             reveal_path_in_folder,
             open_project_path,
+            focus_main_project,
+            detect_claude_hook_status_command,
+            install_claude_hooks_command,
+            remove_claude_hooks_command,
             get_project_latest_mtime_ms,
             count_project_code_lines,
             read_package_version,

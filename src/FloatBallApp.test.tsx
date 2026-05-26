@@ -10,16 +10,28 @@ const eventApiMock = vi.hoisted(() => {
         x: number;
         y: number;
       };
+  type ClaudeCompletionPendingPayload = {
+    cwd: string;
+    sessionId?: string | null;
+  };
   const listeners = new Map<
     string,
-    (event: { payload: FloatBallHoverPayload }) => void
+    (
+      event:
+        | { payload: FloatBallHoverPayload }
+        | { payload: ClaudeCompletionPendingPayload },
+    ) => void
   >();
   return {
     listeners,
     listen: vi.fn(
       (
         event: string,
-        handler: (event: { payload: FloatBallHoverPayload }) => void,
+        handler: (
+          event:
+            | { payload: FloatBallHoverPayload }
+            | { payload: ClaudeCompletionPendingPayload },
+        ) => void,
       ): Promise<() => void> => {
         listeners.set(event, handler);
         return Promise.resolve(() => {
@@ -31,9 +43,23 @@ const eventApiMock = vi.hoisted(() => {
 });
 
 const openProjectPath = vi.fn(() => Promise.resolve());
+const invoke = vi.fn(() => Promise.resolve());
+const startDragging = vi.fn(() => Promise.resolve());
+const createPointerEvent = (type: string, init: MouseEventInit & { pointerId?: number }) => {
+  const event = new MouseEvent(type, init);
+  Object.defineProperty(event, "pointerId", {
+    configurable: true,
+    value: init.pointerId ?? 0,
+  });
+  return event;
+};
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke,
+}));
 
 vi.mock("@tauri-apps/api/dpi", () => ({
   PhysicalPosition: class PhysicalPosition {
@@ -52,7 +78,7 @@ vi.mock("@tauri-apps/api/dpi", () => ({
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    startDragging: () => Promise.resolve(),
+    startDragging,
   }),
 }));
 
@@ -167,6 +193,149 @@ describe("FloatBallApp", () => {
       });
     });
     expect(shell.classList.contains("float-ball-shell--expanded")).toBe(true);
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("blinks when a completion event matches a remembered project and opens it on click", async () => {
+    const { default: FloatBallApp } = await import("./FloatBallApp");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<FloatBallApp />);
+    });
+
+    const mainBall = host.querySelector(".float-ball") as HTMLElement;
+
+    await act(async () => {
+      eventApiMock.listeners.get("claude-completion-pending")?.({
+        payload: { cwd: "/tmp/ProjectTwo/packages/app", sessionId: "session-1" },
+      });
+    });
+
+    expect(mainBall.classList.contains("float-ball--notifying")).toBe(true);
+
+    await act(async () => {
+      mainBall.dispatchEvent(
+        createPointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+      mainBall.dispatchEvent(
+        createPointerEvent("pointerup", {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+      mainBall.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(openProjectPath).toHaveBeenCalledWith("/tmp/ProjectTwo", {
+      applicationPath: null,
+      alertOnError: true,
+    });
+    expect(invoke).toHaveBeenCalledWith("focus_main_project", {
+      path: "/tmp/ProjectTwo",
+    });
+    expect(mainBall.classList.contains("float-ball--notifying")).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("ignores completion events for unknown projects", async () => {
+    const { default: FloatBallApp } = await import("./FloatBallApp");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<FloatBallApp />);
+    });
+
+    const mainBall = host.querySelector(".float-ball") as HTMLElement;
+
+    await act(async () => {
+      eventApiMock.listeners.get("claude-completion-pending")?.({
+        payload: { cwd: "/tmp/UnknownProject", sessionId: "session-2" },
+      });
+    });
+
+    expect(mainBall.classList.contains("float-ball--notifying")).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("does not activate project opening when the main ball was dragged", async () => {
+    const { default: FloatBallApp } = await import("./FloatBallApp");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<FloatBallApp />);
+    });
+
+    const mainBall = host.querySelector(".float-ball") as HTMLElement;
+
+    await act(async () => {
+      eventApiMock.listeners.get("claude-completion-pending")?.({
+        payload: { cwd: "/tmp/ProjectThree/src", sessionId: "session-3" },
+      });
+    });
+
+    await act(async () => {
+      mainBall.dispatchEvent(
+        createPointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          pointerId: 2,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+      mainBall.dispatchEvent(
+        createPointerEvent("pointermove", {
+          bubbles: true,
+          pointerId: 2,
+          clientX: 30,
+          clientY: 30,
+        }),
+      );
+      mainBall.dispatchEvent(
+        createPointerEvent("pointerup", {
+          bubbles: true,
+          button: 0,
+          pointerId: 2,
+          clientX: 30,
+          clientY: 30,
+        }),
+      );
+      mainBall.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(openProjectPath).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(mainBall.classList.contains("float-ball--notifying")).toBe(true);
 
     await act(async () => {
       root.unmount();

@@ -17,6 +17,31 @@ export function normalizeProjectPath(p: string): string {
   return p.trim().replace(/[/\\]+$/, "");
 }
 
+export function pathIsWithinProject(projectPath: string, cwd: string): boolean {
+  const project = normalizeProjectPath(projectPath);
+  const current = normalizeProjectPath(cwd);
+  if (!project || !current) return false;
+  if (project === current) return true;
+  return current.startsWith(`${project}/`) || current.startsWith(`${project}\\`);
+}
+
+export function matchProjectPathForCwd(
+  cwd: string,
+  projectPaths: readonly string[] = readProjectPaths(),
+): string | null {
+  const current = normalizeProjectPath(cwd);
+  if (!current) return null;
+
+  let bestMatch: string | null = null;
+  for (const projectPath of projectPaths) {
+    if (!pathIsWithinProject(projectPath, current)) continue;
+    if (!bestMatch || normalizeProjectPath(projectPath).length > normalizeProjectPath(bestMatch).length) {
+      bestMatch = projectPath;
+    }
+  }
+  return bestMatch;
+}
+
 /** 从仅 session 的旧版迁入 localStorage，关闭应用后仍保留项目列表 */
 function migrateLegacyOnce(): void {
   if (migrated || typeof localStorage === "undefined") return;

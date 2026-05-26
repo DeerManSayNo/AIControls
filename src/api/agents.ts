@@ -154,6 +154,36 @@ export type GithubSkillDetectionResult = {
   skills: GithubSkillCandidate[];
 };
 
+export type ClaudeHookStatus = {
+  installed: boolean;
+  settingsPath: string;
+  bridgeScriptPath: string;
+};
+
+export async function detectClaudeHookStatus(): Promise<ClaudeHookStatus | { error: string }> {
+  try {
+    return await invoke<ClaudeHookStatus>("detect_claude_hook_status_command");
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+export async function installClaudeHooks(): Promise<ClaudeHookStatus | { error: string }> {
+  try {
+    return await invoke<ClaudeHookStatus>("install_claude_hooks_command");
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
+export async function removeClaudeHooks(): Promise<ClaudeHookStatus | { error: string }> {
+  try {
+    return await invoke<ClaudeHookStatus>("remove_claude_hooks_command");
+  } catch (e) {
+    return { error: formatInvokeError(e) };
+  }
+}
+
 function formatInvokeError(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;

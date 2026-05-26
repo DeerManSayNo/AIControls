@@ -1,13 +1,18 @@
 import type { CSSProperties, MouseEvent, PointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openProjectPath } from "./api/openProject";
 import { getOpenAppForProject } from "./projectOpenAppStorage";
-import { useProjectPaths } from "./projectPathsStorage";
+import {
+  matchProjectPathForCwd,
+  useProjectPaths,
+} from "./projectPathsStorage";
 
 const floatWindow = getCurrentWindow();
 const FLOAT_BALL_HOVER_EVENT = "float-ball-hover-state";
+const CLAUDE_COMPLETION_PENDING_EVENT = "claude-completion-pending";
 const FLOAT_BALL_SHELL_WIDTH = 224;
 const FLOAT_BALL_SHELL_HEIGHT = 286;
 const FLOAT_BALL_SIZE = 34;
@@ -23,6 +28,11 @@ type FloatBallHoverPayload =
       x: number;
       y: number;
     };
+
+type ClaudeCompletionPendingPayload = {
+  cwd: string;
+  sessionId?: string | null;
+};
 
 type HoverTarget = "main" | `project-${number}` | null;
 
@@ -79,6 +89,7 @@ export default function FloatBallApp() {
   const [expanded, setExpanded] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [hoverTarget, setHoverTarget] = useState<HoverTarget>(null);
+  const [pendingCompletionProjectPath, setPendingCompletionProjectPath] = useState<string | null>(null);
   const expandedRef = useRef(false);
   const collapseTimerRef = useRef<number | null>(null);
   const openingProjectRef = useRef(false);
@@ -88,6 +99,7 @@ export default function FloatBallApp() {
     x: number;
     y: number;
   } | null>(null);
+  const draggedMainBallRef = useRef(false);
   const projectsCountRef = useRef(0);
   projectsCountRef.current = projects.length;
 
@@ -118,6 +130,7 @@ export default function FloatBallApp() {
   };
 
   const startDragging = () => {
+    draggedMainBallRef.current = true;
     floatWindow.startDragging().catch(() => {
       // Dragging is a native-window affordance; ignore unsupported edge cases.
     });
@@ -125,6 +138,7 @@ export default function FloatBallApp() {
 
   const startPotentialDrag = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
+    draggedMainBallRef.current = false;
     dragStartRef.current = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -207,6 +221,35 @@ export default function FloatBallApp() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen<ClaudeCompletionPendingPayload>(
+      CLAUDE_COMPLETION_PENDING_EVENT,
+      (event) => {
+        if (disposed) return;
+        const projectPath = matchProjectPathForCwd(event.payload.cwd, projectPaths);
+        setPendingCompletionProjectPath(projectPath);
+      },
+    )
+      .then((nextUnlisten) => {
+        if (disposed) {
+          nextUnlisten();
+          return;
+        }
+        unlisten = nextUnlisten;
+      })
+      .catch(() => {
+        // Ignore if the native bridge is unavailable.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [projectPaths]);
+
   const openProject = (
     event: MouseEvent<HTMLButtonElement> | PointerEvent<HTMLButtonElement>,
     path: string,
@@ -224,6 +267,35 @@ export default function FloatBallApp() {
         openingProjectRef.current = false;
       }, 600);
     });
+    suppressHoverExpansionRef.current = true;
+    setHovering(false);
+    setHoverTarget(null);
+    collapseMenu();
+  };
+
+  const handleMainBallClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (draggedMainBallRef.current) {
+      draggedMainBallRef.current = false;
+      return;
+    }
+    if (!pendingCompletionProjectPath || openingProjectRef.current) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    openingProjectRef.current = true;
+    const projectPath = pendingCompletionProjectPath;
+    const customApp = getOpenAppForProject(projectPath);
+    void openProjectPath(projectPath, {
+      applicationPath: customApp ?? null,
+      alertOnError: true,
+    })
+      .then(() => invoke("focus_main_project", { path: projectPath }))
+      .finally(() => {
+        setPendingCompletionProjectPath(null);
+        window.setTimeout(() => {
+          openingProjectRef.current = false;
+        }, 600);
+      });
     suppressHoverExpansionRef.current = true;
     setHovering(false);
     setHoverTarget(null);
@@ -277,7 +349,7 @@ export default function FloatBallApp() {
 
       <button
         type="button"
-        className={`float-ball${hoverTarget === "main" ? " float-ball--hovering" : ""}`}
+        className={`float-ball${hoverTarget === "main" ? " float-ball--hovering" : ""}${pendingCompletionProjectPath ? " float-ball--notifying" : ""}`}
         aria-label="AIControls floating ball"
         aria-expanded={expanded}
         onPointerEnter={() => setHoverTarget("main")}
@@ -286,6 +358,7 @@ export default function FloatBallApp() {
         onPointerMove={maybeStartDragging}
         onPointerUp={clearPotentialDrag}
         onPointerCancel={clearPotentialDrag}
+        onClick={handleMainBallClick}
       >
         <span className="float-ball__core" aria-hidden />
         <span className="float-ball__logo" aria-hidden>

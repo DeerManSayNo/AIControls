@@ -35,6 +35,15 @@ export const zhMessages: Messages = {
   "settings.restoreHiddenAgents": "恢复已隐藏的内置 Agent",
   "settings.restoreHiddenAgentsHint":
     "从侧栏移除的内置 Agent 会写入本机列表；点此恢复为自动检测的完整列表（不影响自定义 Agent）。",
+  "settings.claudeHooks": "Claude Code Hooks",
+  "settings.claudeHooksHint": "安装 Claude Code hook 后，Claude 完成时会通知悬浮球闪烁。",
+  "settings.claudeHooksInstalled": "已安装",
+  "settings.claudeHooksNotInstalled": "未安装",
+  "settings.claudeHooksInstall": "安装 / 刷新 Hook",
+  "settings.claudeHooksRemove": "移除 Hook",
+  "settings.claudeHooksRefresh": "刷新状态",
+  "settings.claudeHooksSettingsPath": "配置文件",
+  "settings.claudeHooksBridgePath": "Bridge 脚本",
 };
 
 export const enMessages: Messages = {
@@ -70,6 +79,15 @@ export const enMessages: Messages = {
   "settings.restoreHiddenAgents": "Restore hidden built-in agents",
   "settings.restoreHiddenAgentsHint":
     "Built-in agents removed from the sidebar are stored locally; use this to show the full auto-detected list again (custom agents are unchanged).",
+  "settings.claudeHooks": "Claude Code Hooks",
+  "settings.claudeHooksHint": "Install the Claude Code hook so float ball notifications can react when Claude finishes.",
+  "settings.claudeHooksInstalled": "Installed",
+  "settings.claudeHooksNotInstalled": "Not installed",
+  "settings.claudeHooksInstall": "Install / Refresh Hook",
+  "settings.claudeHooksRemove": "Remove Hook",
+  "settings.claudeHooksRefresh": "Refresh Status",
+  "settings.claudeHooksSettingsPath": "Settings file",
+  "settings.claudeHooksBridgePath": "Bridge script",
 };
 
 export const allMessages: Record<Locale, Messages> = {
