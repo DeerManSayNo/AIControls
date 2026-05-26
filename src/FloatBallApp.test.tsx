@@ -14,12 +14,19 @@ const eventApiMock = vi.hoisted(() => {
     cwd: string;
     sessionId?: string | null;
   };
+  type ClaudeExecutionStatePayload = {
+    cwd: string;
+    sessionId?: string | null;
+    state: string;
+    toolName?: string | null;
+  };
   const listeners = new Map<
     string,
     (
       event:
         | { payload: FloatBallHoverPayload }
-        | { payload: ClaudeCompletionPendingPayload },
+        | { payload: ClaudeCompletionPendingPayload }
+        | { payload: ClaudeExecutionStatePayload },
     ) => void
   >();
   return {
@@ -30,7 +37,8 @@ const eventApiMock = vi.hoisted(() => {
         handler: (
           event:
             | { payload: FloatBallHoverPayload }
-            | { payload: ClaudeCompletionPendingPayload },
+            | { payload: ClaudeCompletionPendingPayload }
+            | { payload: ClaudeExecutionStatePayload },
         ) => void,
       ): Promise<() => void> => {
         listeners.set(event, handler);
@@ -125,7 +133,7 @@ describe("FloatBallApp", () => {
 
     await act(async () => {
       eventApiMock.listeners.get("float-ball-hover-state")?.({
-        payload: { inside: true, x: 112, y: 263 },
+        payload: { inside: true, x: 112, y: 249 },
       });
     });
 
@@ -138,7 +146,7 @@ describe("FloatBallApp", () => {
 
     await act(async () => {
       eventApiMock.listeners.get("float-ball-hover-state")?.({
-        payload: { inside: true, x: 112, y: 213 },
+        payload: { inside: true, x: 112, y: 205 },
       });
     });
 
@@ -170,14 +178,14 @@ describe("FloatBallApp", () => {
 
     await act(async () => {
       eventApiMock.listeners.get("float-ball-hover-state")?.({
-        payload: { inside: true, x: 112, y: 213 },
+        payload: { inside: true, x: 112, y: 205 },
       });
     });
     expect(shell.classList.contains("float-ball-shell--expanded")).toBe(false);
 
     await act(async () => {
       eventApiMock.listeners.get("float-ball-hover-state")?.({
-        payload: { inside: true, x: 112, y: 263 },
+        payload: { inside: true, x: 112, y: 249 },
       });
     });
     expect(shell.classList.contains("float-ball-shell--expanded")).toBe(true);
@@ -189,7 +197,7 @@ describe("FloatBallApp", () => {
     });
     await act(async () => {
       eventApiMock.listeners.get("float-ball-hover-state")?.({
-        payload: { inside: true, x: 112, y: 263 },
+        payload: { inside: true, x: 112, y: 249 },
       });
     });
     expect(shell.classList.contains("float-ball-shell--expanded")).toBe(true);
@@ -247,9 +255,7 @@ describe("FloatBallApp", () => {
       applicationPath: null,
       alertOnError: true,
     });
-    expect(invoke).toHaveBeenCalledWith("focus_main_project", {
-      path: "/tmp/ProjectTwo",
-    });
+    expect(invoke).not.toHaveBeenCalled();
     expect(mainBall.classList.contains("float-ball--notifying")).toBe(false);
 
     await act(async () => {
@@ -277,6 +283,52 @@ describe("FloatBallApp", () => {
     });
 
     expect(mainBall.classList.contains("float-ball--notifying")).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("shows executing and waiting states for matched projects", async () => {
+    const { default: FloatBallApp } = await import("./FloatBallApp");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<FloatBallApp />);
+    });
+
+    const mainBall = host.querySelector(".float-ball") as HTMLElement;
+
+    await act(async () => {
+      eventApiMock.listeners.get("claude-execution-state")?.({
+        payload: { cwd: "/tmp/ProjectOne/src", state: "running" },
+      });
+    });
+
+    expect(mainBall.classList.contains("float-ball--executing")).toBe(true);
+    expect(mainBall.classList.contains("float-ball--waiting")).toBe(false);
+
+    await act(async () => {
+      eventApiMock.listeners.get("claude-execution-state")?.({
+        payload: { cwd: "/tmp/ProjectOne", state: "waiting" },
+      });
+    });
+
+    expect(mainBall.classList.contains("float-ball--executing")).toBe(false);
+    expect(mainBall.classList.contains("float-ball--waiting")).toBe(true);
+
+    await act(async () => {
+      eventApiMock.listeners.get("claude-completion-pending")?.({
+        payload: { cwd: "/tmp/ProjectOne", sessionId: "session-4" },
+      });
+    });
+
+    expect(mainBall.classList.contains("float-ball--waiting")).toBe(false);
+    expect(mainBall.classList.contains("float-ball--executing")).toBe(false);
+    expect(mainBall.classList.contains("float-ball--notifying")).toBe(true);
 
     await act(async () => {
       root.unmount();

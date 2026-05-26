@@ -1,6 +1,5 @@
 import type { CSSProperties, MouseEvent, PointerEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openProjectPath } from "./api/openProject";
@@ -12,13 +11,16 @@ import {
 
 const floatWindow = getCurrentWindow();
 const FLOAT_BALL_HOVER_EVENT = "float-ball-hover-state";
+const CLAUDE_EXECUTION_STATE_EVENT = "claude-execution-state";
 const CLAUDE_COMPLETION_PENDING_EVENT = "claude-completion-pending";
 const FLOAT_BALL_SHELL_WIDTH = 224;
 const FLOAT_BALL_SHELL_HEIGHT = 286;
 const FLOAT_BALL_SIZE = 34;
 const FLOAT_BALL_PROJECT_GAP = 7;
-const FLOAT_BALL_PROJECTS_BOTTOM = 56;
-const FLOAT_BALL_MAIN_BOTTOM = 6;
+const FLOAT_BALL_MAIN_TO_PROJECTS_GAP = 10;
+const FLOAT_BALL_MAIN_BOTTOM = 20;
+const FLOAT_BALL_PROJECTS_BOTTOM =
+  FLOAT_BALL_MAIN_BOTTOM + FLOAT_BALL_SIZE + FLOAT_BALL_MAIN_TO_PROJECTS_GAP;
 const FLOAT_BALL_DRAG_THRESHOLD = 5;
 
 type FloatBallHoverPayload =
@@ -33,6 +35,15 @@ type ClaudeCompletionPendingPayload = {
   cwd: string;
   sessionId?: string | null;
 };
+
+type ClaudeExecutionStatePayload = {
+  cwd: string;
+  sessionId?: string | null;
+  state: string;
+  toolName?: string | null;
+};
+
+type ClaudeExecutionVisualState = "running" | "waiting";
 
 type HoverTarget = "main" | `project-${number}` | null;
 
@@ -90,6 +101,10 @@ export default function FloatBallApp() {
   const [hovering, setHovering] = useState(false);
   const [hoverTarget, setHoverTarget] = useState<HoverTarget>(null);
   const [pendingCompletionProjectPath, setPendingCompletionProjectPath] = useState<string | null>(null);
+  const [activeExecution, setActiveExecution] = useState<{
+    projectPath: string;
+    state: ClaudeExecutionVisualState;
+  } | null>(null);
   const expandedRef = useRef(false);
   const collapseTimerRef = useRef<number | null>(null);
   const openingProjectRef = useRef(false);
@@ -225,12 +240,21 @@ export default function FloatBallApp() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
-    void listen<ClaudeCompletionPendingPayload>(
-      CLAUDE_COMPLETION_PENDING_EVENT,
+    void listen<ClaudeExecutionStatePayload>(
+      CLAUDE_EXECUTION_STATE_EVENT,
       (event) => {
         if (disposed) return;
         const projectPath = matchProjectPathForCwd(event.payload.cwd, projectPaths);
-        setPendingCompletionProjectPath(projectPath);
+        if (!projectPath) return;
+
+        const rawState = event.payload.state;
+        if (rawState === "waiting" || rawState === "error") {
+          setActiveExecution({ projectPath, state: "waiting" });
+          return;
+        }
+        if (rawState === "running" || rawState === "tool") {
+          setActiveExecution({ projectPath, state: "running" });
+        }
       },
     )
       .then((nextUnlisten) => {
@@ -250,6 +274,46 @@ export default function FloatBallApp() {
     };
   }, [projectPaths]);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen<ClaudeCompletionPendingPayload>(
+      CLAUDE_COMPLETION_PENDING_EVENT,
+      (event) => {
+        if (disposed) return;
+        const projectPath = matchProjectPathForCwd(event.payload.cwd, projectPaths);
+        setPendingCompletionProjectPath(projectPath);
+        if (projectPath) {
+          setActiveExecution(null);
+        }
+      },
+    )
+      .then((nextUnlisten) => {
+        if (disposed) {
+          nextUnlisten();
+          return;
+        }
+        unlisten = nextUnlisten;
+      })
+      .catch(() => {
+        // Ignore if the native bridge is unavailable.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [projectPaths]);
+
+  const openProjectWithSavedApp = (path: string) => {
+    const customApp = getOpenAppForProject(path);
+    return openProjectPath(path, {
+      applicationPath: customApp ?? null,
+      alertOnError: true,
+    });
+  };
+
   const openProject = (
     event: MouseEvent<HTMLButtonElement> | PointerEvent<HTMLButtonElement>,
     path: string,
@@ -258,11 +322,7 @@ export default function FloatBallApp() {
     event.stopPropagation();
     if (openingProjectRef.current) return;
     openingProjectRef.current = true;
-    const customApp = getOpenAppForProject(path);
-    void openProjectPath(path, {
-      applicationPath: customApp ?? null,
-      alertOnError: true,
-    }).finally(() => {
+    void openProjectWithSavedApp(path).finally(() => {
       window.setTimeout(() => {
         openingProjectRef.current = false;
       }, 600);
@@ -284,18 +344,12 @@ export default function FloatBallApp() {
     event.stopPropagation();
     openingProjectRef.current = true;
     const projectPath = pendingCompletionProjectPath;
-    const customApp = getOpenAppForProject(projectPath);
-    void openProjectPath(projectPath, {
-      applicationPath: customApp ?? null,
-      alertOnError: true,
-    })
-      .then(() => invoke("focus_main_project", { path: projectPath }))
-      .finally(() => {
-        setPendingCompletionProjectPath(null);
-        window.setTimeout(() => {
-          openingProjectRef.current = false;
-        }, 600);
-      });
+    void openProjectWithSavedApp(projectPath).finally(() => {
+      setPendingCompletionProjectPath(null);
+      window.setTimeout(() => {
+        openingProjectRef.current = false;
+      }, 600);
+    });
     suppressHoverExpansionRef.current = true;
     setHovering(false);
     setHoverTarget(null);
@@ -315,6 +369,19 @@ export default function FloatBallApp() {
     scheduleCollapse();
   };
 
+  const floatBallStateClass = useMemo(() => {
+    if (activeExecution?.state === "waiting") {
+      return " float-ball--waiting";
+    }
+    if (pendingCompletionProjectPath) {
+      return " float-ball--notifying";
+    }
+    if (activeExecution?.state === "running") {
+      return " float-ball--executing";
+    }
+    return "";
+  }, [activeExecution, pendingCompletionProjectPath]);
+
   return (
     <div
       className={`float-ball-shell${expanded ? " float-ball-shell--expanded" : ""}${hovering ? " float-ball-shell--hovering" : ""}`}
@@ -322,7 +389,11 @@ export default function FloatBallApp() {
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
     >
-      <div className="float-ball-projects" aria-label="Project shortcuts">
+      <div
+        className="float-ball-projects"
+        style={{ bottom: FLOAT_BALL_PROJECTS_BOTTOM } as CSSProperties}
+        aria-label="Project shortcuts"
+      >
         {projects.map((path, index) => {
           const name = folderBasename(path);
           return (
@@ -349,8 +420,12 @@ export default function FloatBallApp() {
 
       <button
         type="button"
-        className={`float-ball${hoverTarget === "main" ? " float-ball--hovering" : ""}${pendingCompletionProjectPath ? " float-ball--notifying" : ""}`}
-        aria-label="AIControls floating ball"
+        className={`float-ball${hoverTarget === "main" ? " float-ball--hovering" : ""}${floatBallStateClass}`}
+        aria-label={
+          pendingCompletionProjectPath
+            ? "Claude finished — click to open project"
+            : "AIControls floating ball"
+        }
         aria-expanded={expanded}
         onPointerEnter={() => setHoverTarget("main")}
         onMouseEnter={() => setHoverTarget("main")}

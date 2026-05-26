@@ -14,11 +14,12 @@ mod storage;
 use dirs::home_dir;
 use scan::AgentInventory;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     fs,
     io::{BufRead, BufReader},
     net::TcpListener,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,6 +28,7 @@ use std::{
 };
 use tauri::{
     menu::{Menu, MenuItem},
+    path::BaseDirectory,
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent,
 };
@@ -38,8 +40,13 @@ const CLAUDE_EXECUTION_STATE_EVENT: &str = "claude-execution-state";
 const CLAUDE_COMPLETION_PENDING_EVENT: &str = "claude-completion-pending";
 const CLAUDE_COMPLETION_PORT: u16 = 38971;
 const CLAUDE_HOOK_SETTINGS_RELATIVE_PATH: &str = ".claude/settings.json";
-const HOOK_SCRIPT_RELATIVE_PATH: &str = "scripts/install-live-island-hooks.mjs";
-const BRIDGE_SCRIPT_RELATIVE_PATH: &str = "Library/Application Support/com.aicontrols.desktop/live-island-bridge.mjs";
+const BRIDGE_SCRIPT_NAME: &str = "live-island-bridge.mjs";
+const EMBEDDED_BRIDGE_SCRIPT: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/live-island-bridge.mjs"));
+const DEV_BRIDGE_SCRIPT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../scripts/live-island-bridge.mjs"
+);
 const REQUIRED_CLAUDE_HOOK_EVENTS: &[&str] = &[
     "UserPromptSubmit",
     "PreToolUse",
@@ -53,7 +60,7 @@ const FLOAT_BALL_HOVER_POLL_MS: u64 = 80;
 const TRAY_SHOW_MAIN_ID: &str = "show-main";
 const TRAY_QUIT_ID: &str = "quit";
 const FLOAT_BALL_COLLAPSED_WIDTH: u32 = 46;
-const FLOAT_BALL_COLLAPSED_HEIGHT: u32 = 46;
+const FLOAT_BALL_COLLAPSED_HEIGHT: u32 = 56;
 const FLOAT_BALL_EXPANDED_WIDTH: u32 = 224;
 const FLOAT_BALL_EXPANDED_HEIGHT: u32 = 286;
 const FLOAT_BALL_DEFAULT_RIGHT_OFFSET: i32 = 68;
@@ -107,67 +114,254 @@ struct ClaudeHookStatus {
     bridge_script_path: String,
 }
 
-fn detect_claude_hook_status() -> Result<ClaudeHookStatus, String> {
+fn claude_settings_path() -> Result<PathBuf, String> {
     let home = home_dir().ok_or_else(|| "无法确定用户目录".to_string())?;
-    let settings_path = home.join(CLAUDE_HOOK_SETTINGS_RELATIVE_PATH);
-    let bridge_script_path = home.join(BRIDGE_SCRIPT_RELATIVE_PATH);
-    let installed = settings_has_managed_claude_hook(&settings_path)?;
-    Ok(ClaudeHookStatus {
-        installed,
-        settings_path: settings_path.to_string_lossy().into_owned(),
-        bridge_script_path: bridge_script_path.to_string_lossy().into_owned(),
-    })
+    Ok(home.join(CLAUDE_HOOK_SETTINGS_RELATIVE_PATH))
 }
 
-fn settings_has_managed_claude_hook(settings_path: &Path) -> Result<bool, String> {
-    if !settings_path.exists() {
+fn bridge_script_candidates(app: &AppHandle) -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from(DEV_BRIDGE_SCRIPT)];
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("scripts").join(BRIDGE_SCRIPT_NAME));
+        candidates.push(current_dir.join("..").join("scripts").join(BRIDGE_SCRIPT_NAME));
+    }
+    if let Ok(path) = app
+        .path()
+        .resolve(BRIDGE_SCRIPT_NAME, BaseDirectory::Resource)
+    {
+        candidates.push(path);
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join(BRIDGE_SCRIPT_NAME));
+        candidates.push(resource_dir.join("_up_").join("scripts").join(BRIDGE_SCRIPT_NAME));
+    }
+
+    candidates
+}
+
+fn find_bundled_bridge_script(app: &AppHandle) -> Option<PathBuf> {
+    bridge_script_candidates(app)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn read_bridge_script_content(app: &AppHandle) -> String {
+    if let Some(path) = find_bundled_bridge_script(app) {
+        if let Ok(text) = fs::read_to_string(&path) {
+            return text;
+        }
+    }
+    EMBEDDED_BRIDGE_SCRIPT.to_string()
+}
+
+fn bridge_script_for_hooks(app: &AppHandle) -> Result<PathBuf, String> {
+    let bridge_content = read_bridge_script_content(app);
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法解析应用数据目录: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("创建应用数据目录失败: {e}"))?;
+    let dest = dir.join(BRIDGE_SCRIPT_NAME);
+    fs::write(&dest, bridge_content).map_err(|e| format!("写入 bridge 脚本失败: {e}"))?;
+    Ok(dest)
+}
+
+fn hook_command_for_bridge(bridge_path: &Path) -> String {
+    let normalized = bridge_path.to_string_lossy().replace('\\', "/");
+    format!("node \"{normalized}\" hook")
+}
+
+fn command_to_bridge_path(command: &str) -> Option<PathBuf> {
+    if !command.contains(BRIDGE_SCRIPT_NAME) {
+        return None;
+    }
+    for token in command.split_whitespace() {
+        let trimmed = token.trim_matches('"');
+        if trimmed.contains(BRIDGE_SCRIPT_NAME) {
+            let path = PathBuf::from(trimmed);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn bridge_path_from_settings(settings_path: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(settings_path).ok()?;
+    let parsed = serde_json::from_str::<Value>(&text).ok()?;
+    let hooks = parsed.get("hooks")?.as_object()?;
+    for event in REQUIRED_CLAUDE_HOOK_EVENTS {
+        let entries = hooks.get(*event)?.as_array()?;
+        for entry in entries {
+            let hooks_list = entry.get("hooks")?.as_array()?;
+            for hook in hooks_list {
+                if hook.get("type").and_then(Value::as_str) == Some("command") {
+                    if let Some(command) = hook.get("command").and_then(Value::as_str) {
+                        if let Some(path) = command_to_bridge_path(command) {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn app_data_bridge_script_path(app: &AppHandle) -> Option<PathBuf> {
+    let dest = app.path().app_data_dir().ok()?.join(BRIDGE_SCRIPT_NAME);
+    dest.is_file().then_some(dest)
+}
+
+fn resolved_bridge_script_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(settings_path) = claude_settings_path() {
+        if let Some(path) = bridge_path_from_settings(&settings_path) {
+            return Some(path);
+        }
+    }
+    app_data_bridge_script_path(app).or_else(|| find_bundled_bridge_script(app))
+}
+
+fn event_has_managed_claude_hook(value: &Value) -> bool {
+    value
+        .get("hooks")
+        .and_then(Value::as_array)
+        .is_some_and(|hooks| {
+            hooks.iter().any(|hook| {
+                hook.get("type").and_then(Value::as_str) == Some("command")
+                    && hook
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|command| command.contains(BRIDGE_SCRIPT_NAME))
+            })
+        })
+}
+
+fn hooks_installed_in_settings(settings_path: &Path) -> Result<bool, String> {
+    if !settings_path.is_file() {
         return Ok(false);
     }
 
     let raw = fs::read_to_string(settings_path)
         .map_err(|e| format!("读取 Claude 设置失败: {e}"))?;
-    let json: serde_json::Value =
+    let parsed: Value =
         serde_json::from_str(&raw).map_err(|e| format!("解析 Claude 设置失败: {e}"))?;
-    let Some(hooks) = json.get("hooks") else {
-        return Ok(false);
-    };
-    let Some(stop_hooks) = hooks.get("Stop") else {
-        return Ok(false);
-    };
-    let Some(entries) = stop_hooks.as_array() else {
+    let Some(hooks) = parsed.get("hooks").and_then(Value::as_object) else {
         return Ok(false);
     };
 
-    for entry in entries {
-        let Some(hook_list) = entry.get("hooks").and_then(|value| value.as_array()) else {
+    Ok(REQUIRED_CLAUDE_HOOK_EVENTS.iter().all(|event| {
+        hooks
+            .get(*event)
+            .and_then(Value::as_array)
+            .is_some_and(|entries| entries.iter().any(event_has_managed_claude_hook))
+    }))
+}
+
+fn refresh_managed_claude_hook_commands(entries: &mut Vec<Value>, command: &str) {
+    let mut found = false;
+    for entry in entries.iter_mut() {
+        let Some(hooks_list) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
             continue;
         };
-        for hook in hook_list {
-            let Some(command) = hook.get("command").and_then(|value| value.as_str()) else {
+        for hook in hooks_list.iter_mut() {
+            let Some(hook_map) = hook.as_object_mut() else {
                 continue;
             };
-            if command.contains("live-island-bridge.mjs") {
-                return Ok(true);
+            if hook_map
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|c| c.contains(BRIDGE_SCRIPT_NAME))
+            {
+                hook_map.insert("type".to_string(), json!("command"));
+                hook_map.insert("command".to_string(), json!(command));
+                found = true;
             }
         }
     }
-
-    Ok(false)
+    if !found {
+        entries.push(json!({
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": command,
+            }],
+        }));
+    }
 }
 
-fn run_hook_installer(script_path: &Path) -> Result<(), String> {
-    if !script_path.is_file() {
-        return Err(format!("未找到 hook 安装脚本: {}", script_path.display()));
+fn detect_claude_hook_status(app: &AppHandle) -> Result<ClaudeHookStatus, String> {
+    let settings_path = claude_settings_path()?;
+    let installed = hooks_installed_in_settings(&settings_path)?;
+    let bridge_script_path = resolved_bridge_script_path(app)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(ClaudeHookStatus {
+        installed,
+        settings_path: settings_path.to_string_lossy().into_owned(),
+        bridge_script_path,
+    })
+}
+
+fn install_managed_claude_hooks(app: &AppHandle) -> Result<ClaudeHookStatus, String> {
+    let settings_path = claude_settings_path()?;
+    let bridge_path = bridge_script_for_hooks(app)?;
+    let command = hook_command_for_bridge(&bridge_path);
+
+    let mut root = if settings_path.is_file() {
+        let text = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("读取 Claude 设置失败: {e}"))?;
+        serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    if !root.is_object() {
+        root = json!({});
     }
 
-    let status = Command::new("node")
-        .arg(script_path)
-        .status()
-        .map_err(|e| format!("执行 hook 安装脚本失败: {e}"))?;
-    if !status.success() {
-        return Err("hook 安装脚本执行失败".into());
+    let Some(root_map) = root.as_object_mut() else {
+        return Err("无法写入 Claude hooks 配置".into());
+    };
+    let hooks_value = root_map
+        .entry("hooks".to_string())
+        .or_insert_with(|| json!({}));
+    if !hooks_value.is_object() {
+        *hooks_value = json!({});
     }
-    Ok(())
+    let Some(hooks_map) = hooks_value.as_object_mut() else {
+        return Err("无法写入 Claude hooks 配置".into());
+    };
+
+    for event in REQUIRED_CLAUDE_HOOK_EVENTS {
+        let entry = hooks_map
+            .entry((*event).to_string())
+            .or_insert_with(|| json!([]));
+        if !entry.is_array() {
+            *entry = json!([]);
+        }
+        let Some(entries) = entry.as_array_mut() else {
+            continue;
+        };
+        refresh_managed_claude_hook_commands(entries, &command);
+    }
+
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 Claude 配置目录失败: {e}"))?;
+    }
+    fs::write(
+        &settings_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&root)
+                .map_err(|e| format!("写回 Claude 设置失败: {e}"))?
+        ),
+    )
+    .map_err(|e| format!("写回 Claude 设置失败: {e}"))?;
+
+    detect_claude_hook_status(app)
 }
 
 fn remove_managed_claude_hooks(settings_path: &Path) -> Result<(), String> {
@@ -177,31 +371,21 @@ fn remove_managed_claude_hooks(settings_path: &Path) -> Result<(), String> {
 
     let raw = fs::read_to_string(settings_path)
         .map_err(|e| format!("读取 Claude 设置失败: {e}"))?;
-    let mut json: serde_json::Value =
+    let mut root: Value =
         serde_json::from_str(&raw).map_err(|e| format!("解析 Claude 设置失败: {e}"))?;
-    let Some(hooks) = json.get_mut("hooks").and_then(|value| value.as_object_mut()) else {
-        return Ok(());
-    };
-    let Some(stop_hooks) = hooks.get_mut("Stop").and_then(|value| value.as_array_mut()) else {
-        return Ok(());
-    };
-
-    stop_hooks.retain(|entry| {
-        let Some(hook_list) = entry.get("hooks").and_then(|value| value.as_array()) else {
-            return true;
-        };
-        !hook_list.iter().any(|hook| {
-            hook.get("command")
-                .and_then(|value| value.as_str())
-                .is_some_and(|command| command.contains("live-island-bridge.mjs"))
-        })
-    });
+    if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
+        for event in REQUIRED_CLAUDE_HOOK_EVENTS {
+            if let Some(entries) = hooks.get_mut(*event).and_then(Value::as_array_mut) {
+                entries.retain(|entry| !event_has_managed_claude_hook(entry));
+            }
+        }
+    }
 
     fs::write(
         settings_path,
         format!(
             "{}\n",
-            serde_json::to_string_pretty(&json)
+            serde_json::to_string_pretty(&root)
                 .map_err(|e| format!("写回 Claude 设置失败: {e}"))?
         ),
     )
@@ -219,7 +403,43 @@ fn emit_pending_claude_completion(app: &AppHandle, payload: ClaudeCompletionPend
     }
 }
 
-fn start_claude_completion_listener(app: AppHandle) {
+fn emit_claude_execution_state(app: &AppHandle, payload: ClaudeExecutionStatePayload) {
+    if let Some(ball) = app.get_webview_window(FLOAT_BALL_WINDOW_LABEL) {
+        let _ = ball.emit(CLAUDE_EXECUTION_STATE_EVENT, payload);
+    }
+}
+
+fn handle_claude_hook_message(app: &AppHandle, message: ClaudeHookMessage) {
+    if message.message_type != "claude-state" {
+        return;
+    }
+
+    let Some(state) = message.state else {
+        return;
+    };
+
+    match state.as_str() {
+        "complete" => emit_pending_claude_completion(
+            app,
+            ClaudeCompletionPendingPayload {
+                cwd: message.cwd,
+                session_id: message.session_id,
+            },
+        ),
+        "running" | "tool" | "waiting" | "error" => emit_claude_execution_state(
+            app,
+            ClaudeExecutionStatePayload {
+                cwd: message.cwd,
+                session_id: message.session_id,
+                state,
+                tool_name: message.tool_name,
+            },
+        ),
+        _ => {}
+    }
+}
+
+fn start_claude_hook_listener(app: AppHandle) {
     tauri::async_runtime::spawn_blocking(move || {
         let listener = match TcpListener::bind(("127.0.0.1", CLAUDE_COMPLETION_PORT)) {
             Ok(listener) => listener,
@@ -239,19 +459,10 @@ fn start_claude_completion_listener(app: AppHandle) {
                 if trimmed.is_empty() {
                     continue;
                 }
-                let Ok(message) = serde_json::from_str::<ClaudeCompletionMessage>(trimmed) else {
+                let Ok(message) = serde_json::from_str::<ClaudeHookMessage>(trimmed) else {
                     continue;
                 };
-                if message.message_type != "claude-complete" {
-                    continue;
-                }
-                emit_pending_claude_completion(
-                    &app,
-                    ClaudeCompletionPendingPayload {
-                        cwd: message.cwd,
-                        session_id: message.session_id,
-                    },
-                );
+                handle_claude_hook_message(&app, message);
             }
         }
     });
@@ -591,23 +802,20 @@ fn focus_main_project(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn detect_claude_hook_status_command() -> Result<ClaudeHookStatus, String> {
-    detect_claude_hook_status()
+fn detect_claude_hook_status_command(app: AppHandle) -> Result<ClaudeHookStatus, String> {
+    detect_claude_hook_status(&app)
 }
 
 #[tauri::command]
-fn install_claude_hooks_command() -> Result<ClaudeHookStatus, String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("读取当前目录失败: {e}"))?;
-    run_hook_installer(&cwd.join(HOOK_SCRIPT_RELATIVE_PATH))?;
-    detect_claude_hook_status()
+fn install_claude_hooks_command(app: AppHandle) -> Result<ClaudeHookStatus, String> {
+    install_managed_claude_hooks(&app)
 }
 
 #[tauri::command]
-fn remove_claude_hooks_command() -> Result<ClaudeHookStatus, String> {
-    let home = home_dir().ok_or_else(|| "无法确定用户目录".to_string())?;
-    let settings_path = home.join(CLAUDE_HOOK_SETTINGS_RELATIVE_PATH);
+fn remove_claude_hooks_command(app: AppHandle) -> Result<ClaudeHookStatus, String> {
+    let settings_path = claude_settings_path()?;
     remove_managed_claude_hooks(&settings_path)?;
-    detect_claude_hook_status()
+    detect_claude_hook_status(&app)
 }
 
 #[tauri::command]
@@ -1691,7 +1899,7 @@ pub fn run() {
             setup_tray(app, Arc::clone(&tray_is_quitting))?;
             configure_float_ball(app.handle());
             start_float_ball_hover_watcher(app.handle().clone());
-            start_claude_completion_listener(app.handle().clone());
+            start_claude_hook_listener(app.handle().clone());
             gitee::sync_ui_schedule_next_in_secs(300);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
